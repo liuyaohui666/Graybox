@@ -118,7 +118,7 @@ Local loopback configurations remain compatible. Cloud mappings additionally set
 
 Set GRAYBOX_CLIENT_CONFIG to an absolute personal path outside repositories. Pairing accepts --config ABS for the same path. The installation .local default is refused for cloud because it is inside this repository.
 
-Run auth pair --endpoint https://YOUR-GRAYBOX-HOST --name "My Agent" --config ABS. The CLI prints the short user code to stderr, waits for desktop human approval, and polls every two seconds for at most ten minutes. Ctrl+C/SIGTERM interrupts; each request times out after eight seconds. CLI/MCP have no human login/token options.
+Run auth pair --endpoint https://YOUR-GRAYBOX-HOST --name "My Agent" --config ABS. The CLI prints the short user code to stderr, waits for desktop human approval, and polls every three seconds for at most ten minutes. Ctrl+C/SIGTERM interrupts; each request times out after eight seconds. CLI/MCP have no human login/token options.
 
 For noninteractive tools run auth pair-start with those options, have the human approve its user_code, then auth pair-complete --config ABS. Pending completion returns status pending; run it again after approval. Existing mappings require --replace before consuming a pair. Device codes are saved privately and never printed. Credential retrieval consumes the pair once: lost retrieval or persistence requires starting a fresh pair and revoking the abandoned Agent in desktop.
 
