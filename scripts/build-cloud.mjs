@@ -6,6 +6,11 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const require=createRequire(import.meta.url);
 const {build}=createRequire(require.resolve('tsx/package.json'))('esbuild');
 const out=resolve(root,'.local/cloud-release');
+// Always produce cloud assets, never package a stale local-demo dist directory.
+process.env.VITE_GRAYBOX_MODE='cloud';
+delete process.env.VITE_GRAYBOX_ALLOW_LOOPBACK_TEST;
+const {build:buildWeb}=await import('vite');
+await buildWeb({configFile:resolve(root,'apps/desktop/vite.config.ts')});
 await mkdir(out,{recursive:true});
 for(const [entry,name] of [['apps/api/src/main.ts','server.mjs'],['scripts/cloud-bootstrap.ts','bootstrap.mjs']]){
   await build({entryPoints:[resolve(root,entry)],outfile:resolve(out,name),bundle:true,platform:'node',target:'node24',format:'esm',external:['pg-native'],banner:{js:"import {createRequire as __createRequire} from 'node:module'; const require=__createRequire(import.meta.url);"},logLevel:'warning'});
@@ -16,6 +21,6 @@ for(const sql of ['001_m1.sql','002_cloud_auth.sql'])await copyFile(resolve(root
 const web=resolve(out,'web');
 await rm(web,{recursive:true,force:true});
 await cp(resolve(root,'apps/desktop/dist'),web,{recursive:true});
-await cp(resolve(root,'ops/cloud'),resolve(out,'ops'),{recursive:true});
+await cp(resolve(root,'ops/cloud'),resolve(out,'ops'),{recursive:true,filter:source=>!source.includes('__pycache__')&&!source.endsWith('.pyc')});
 await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',mode:'cloud',built_at:new Date().toISOString(),node:'24.18.0'},null,2)+'\n');
 console.log(out);
