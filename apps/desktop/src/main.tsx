@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useContext } from "react";
+import React, { useEffect, useRef, useState, useContext, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { profiles, request, ApiError, type Profile } from "./platform.ts";
 import { commandRetry } from "./retry.ts";
@@ -37,6 +37,7 @@ const date = (s?: string) =>
 
 function App() {
   const mode = useContext(ConnectionModeContext);
+  const pendingWrite = useSyncExternalStore(writeSafety.subscribe, writeSafety.snapshot);
   const [people, setPeople] = useState<Profile[]>([]),
     [profile, setProfile] = useState("");
   const [page, setPage] = useState<Page>("home"),
@@ -341,7 +342,7 @@ function App() {
             <select
               aria-label="切换当前身份"
               value={profile}
-              disabled={busy || people.length < 2}
+              disabled={busy || !!pendingWrite || people.length < 2}
               onChange={(e) => setProfile(e.target.value)}
             >
               {people.map((p) => (
@@ -1065,6 +1066,7 @@ createRoot(document.getElementById("root")!).render(
     <SessionGate><App /></SessionGate>
   </React.StrictMode>,
 );
+
 
 
 
