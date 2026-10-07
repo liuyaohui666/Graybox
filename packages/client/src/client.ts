@@ -12,17 +12,22 @@ export function localEndpoint(value:string):string {
   if(url.protocol!=='http:'||!['127.0.0.1','[::1]'].includes(url.hostname)||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new ClientError('ENDPOINT_INVALID','A local numeric loopback HTTP endpoint without userinfo, path, query or fragment is required');
   return url.origin;
 }
+export function cloudEndpoint(value:string):string {
+  let url:URL;try{url=new URL(value);}catch{throw new ClientError('ENDPOINT_INVALID','HTTPS origin required');}
+  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new ClientError('ENDPOINT_INVALID','Cloud endpoint must be an HTTPS origin without userinfo, path, query or fragment');
+  return url.origin;
+}
 function id(value:string){const parsed=z.uuid().safeParse(value);if(!parsed.success)throw new ClientError('VALIDATION','Valid UUID required');return parsed.data;}
 export type AgentIdentity={credential_id:string;human_id:string;agent_id:string;kind:'agent';project_ids:string[]|null};
-export type Health={environment_id:string;mode:'local'};
+export type Health={environment_id:string;mode:'local'|'cloud'};
 export type Project=Entity&{workspace_id:string;name?:string};
 export type Experiment=Entity&{project_id:string};
 export class ApiClient {
   readonly endpoint:string;
   readonly #token:string;
   readonly #timeout:number;
-  constructor(options:{endpoint:string;token:string;timeout_ms?:number}) {
-    this.endpoint=localEndpoint(options.endpoint);
+  constructor(options:{endpoint:string;token:string;timeout_ms?:number;mode?:'local'|'cloud'}) {
+    this.endpoint=options.mode==='cloud'?cloudEndpoint(options.endpoint):localEndpoint(options.endpoint);
     if(!options.token||/[\r\n]/.test(options.token))throw new ClientError('CREDENTIAL_INVALID','Invalid local agent credential');
     this.#token=options.token;this.#timeout=options.timeout_ms??8000;
     if(!Number.isInteger(this.#timeout)||this.#timeout<1||this.#timeout>60000)throw new ClientError('VALIDATION','Timeout must be 1–60000 ms');
@@ -38,7 +43,7 @@ export class ApiClient {
     if(!result||!Object.hasOwn(result,'data'))throw new ClientError('RESPONSE_INVALID','Local API response is missing data',502);
     return result.data as T;
   }
-  health(){return this.request<Health>('GET','/v1/health',undefined,false);}
+  async health(){const value=await this.request<unknown>('GET','/v1/health',undefined,false);const parsed=z.object({environment_id:z.uuid(),mode:z.enum(['local','cloud'])}).safeParse(value);if(!parsed.success)throw new ClientError('RESPONSE_INVALID','Invalid environment health',502);return parsed.data;}
   async me():Promise<AgentIdentity>{
     const value=await this.request<unknown>('GET','/v1/me');const parsed=z.object({credential_id:z.uuid(),human_id:z.uuid(),agent_id:z.uuid(),kind:z.literal('agent'),project_ids:z.array(z.uuid()).nullable()}).safeParse(value);
     if(!parsed.success)throw new ClientError('AGENT_REQUIRED','CLI and MCP require a distinct local agent identity',403);return parsed.data;

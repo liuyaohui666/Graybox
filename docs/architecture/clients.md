@@ -1,6 +1,6 @@
-# M1 local CLI, MCP and project context
+# CLI, MCP and local/cloud project context
 
-The CLI and MCP use the same strict API command contract and local context resolver. They authenticate as distinct seeded agents. The API owns revisions, evidence snapshots, provenance, idempotency and undo decisions. No cloud authentication or independent command execution is implemented here.
+The CLI and MCP use the same strict API command contract and context resolver. They authenticate as distinct seeded local agents or paired cloud agents. The API owns revisions, evidence snapshots, provenance, idempotency and undo decisions.
 
 ## Trusted personal configuration
 
@@ -112,3 +112,16 @@ A safe **project-scoped** configuration template is in [skills/graybox/config.to
 `tests/unit/local-context.test.ts` covers numeric loopback/redirect/no replay/timeout/redaction, explicit cwd, strict and ambiguous bindings, environment/workspace/active-experiment mismatch, Chinese/space paths, Git worktrees, stale-selection repair and nonexecution of configured fsmonitor/clean filters. `tests/integration/clients.test.ts` uses only guarded `graybox_test`, an ephemeral Fastify loopback API, real CLI subprocesses, and official MCP Client → stdio subprocess → API → PostgreSQL. It verifies all three seeded agent identities/provenance, stable-key retry, conflict, immutable submission, eligible undo and exact execution replay after project/active-experiment deletion, including removed-authority rejection. Subprocesses receive Vitest cancellation signals; multi-subprocess tests have focused 10–15 second budgets and isolated binding/identity files.
 
 Run `pnpm typecheck` and `pnpm test` using root `fileParallelism:false` because backend and client fixtures reset the same isolated schema. No development database is reset. These results establish SDK transport and actual API/database behavior. The main task separately exercised the real Codex host and records that observed result in its M1 acceptance evidence; user approval and human review remain separate from automated checks.
+## Cloud Agent pairing
+
+Local loopback configurations remain compatible. Cloud mappings additionally set mode to cloud, require HTTPS origins, and keep config and credentials outside Git repositories. Repository bindings still supply only UUIDs. Completion validates cloud health/environment UUID, Agent UUID, owning human UUID and accessible workspace before saving. Context repeats those checks and validates project/experiment ownership. Expiry is checked locally; revocation and member disable are enforced by the API.
+
+Set GRAYBOX_CLIENT_CONFIG to an absolute personal path outside repositories. Pairing accepts --config ABS for the same path. The installation .local default is refused for cloud because it is inside this repository.
+
+Run auth pair --endpoint https://YOUR-GRAYBOX-HOST --name "My Agent" --config ABS. The CLI prints the short user code to stderr, waits for desktop human approval, and polls every two seconds for at most ten minutes. Ctrl+C/SIGTERM interrupts; each request times out after eight seconds. CLI/MCP have no human login/token options.
+
+For noninteractive tools run auth pair-start with those options, have the human approve its user_code, then auth pair-complete --config ABS. Pending completion returns status pending; run it again after approval. Existing mappings require --replace before consuming a pair. Device codes are saved privately and never printed. Credential retrieval consumes the pair once: lost retrieval or persistence requires starting a fresh pair and revoking the abandoned Agent in desktop.
+
+Credentials use a strict cloud-agent file with environment/workspace UUIDs, expiry and one Agent identity/token. Config stores its path and Agent UUID. Writes use private temporary directories, POSIX directory 0700/file 0600, or Windows inheritance removal and current-user-only full-control ACL before writing secret content. Final files retain that ACL. Redirects are refused; credentials never forward. No global Codex host configuration is edited.
+
+Unit cloud-client tests cover HTTPS origin restrictions, public pairing without bearer headers, Agent persistence and redirect rejection. Integration cloud-clients tests exercise real PostgreSQL bootstrap/redeem/pending/approval, private config, project context, malicious binding endpoint rejection and revocation. Their HTTPS fetch adapter delegates to actual Fastify injection; deployed TLS, endpoint reachability and desktop human approval remain separate acceptance layers. Existing local-context and real CLI/MCP integration tests remain applicable.

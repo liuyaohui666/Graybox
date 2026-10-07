@@ -3,17 +3,18 @@ import { dirname, join, isAbsolute, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ApiClient, ClientError, localEndpoint } from '../../client/src/client.ts';
+import { ApiClient, ClientError, localEndpoint, cloudEndpoint } from '../../client/src/client.ts';
 import { commandSchema } from '../../contracts/src/index.ts';
 import { gitRoot, gitValue, gitMetadata } from './git.ts';
 
 export const defaultConfigPath=fileURLToPath(new URL('../../../.local/client.json',import.meta.url));
 const bindingSchema=z.strictObject({version:z.literal(1),environment_id:z.uuid(),workspace_id:z.uuid(),project_id:z.uuid()});
 const localSchema=z.strictObject({version:z.literal(1),active_experiment_id:z.uuid().nullable()});
-const environmentSchema=z.strictObject({environment_id:z.uuid(),endpoint:z.string(),credentials_file:z.string(),agent_id:z.uuid()});
+const environmentSchema=z.strictObject({environment_id:z.uuid(),endpoint:z.string(),credentials_file:z.string(),agent_id:z.uuid(),mode:z.enum(['local','cloud']).optional()});
 const configSchema=z.strictObject({version:z.literal(1),environments:z.array(environmentSchema).min(1)});
 const agentSchema=z.object({id:z.uuid(),human_id:z.uuid(),name:z.string(),token:z.string().min(1),project_ids:z.array(z.uuid()).nullable()});
 const credentialsSchema=z.object({mode:z.literal('local-demonstration-only'),workspace_id:z.uuid(),agents:z.array(agentSchema)});
+export const cloudCredentialsSchema=z.strictObject({mode:z.literal('cloud-agent'),environment_id:z.uuid(),workspace_id:z.uuid(),expires_at:z.iso.datetime(),agent:agentSchema});
 export type Binding=z.infer<typeof bindingSchema>;
 type Environment=z.infer<typeof environmentSchema>;
 export type ContextOptions={cwd:string;configPath?:string;includeGit?:boolean};
@@ -21,10 +22,11 @@ function fail(code:string,message:string):never{throw new ClientError(code,messa
 async function exists(path:string){try{await stat(path);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw new ClientError('PATH_INVALID','Local context path is not readable');}}
 async function json(path:string,code:string){try{const value=await readFile(path,'utf8');if(value.length>512*1024)throw new Error();return JSON.parse(value) as unknown;}catch{fail(code,'Required local JSON is missing, unreadable or invalid');}}
 function parse<T>(schema:z.ZodType<T>,value:unknown,code:string):T{const result=schema.safeParse(value);if(!result.success)fail(code,'Local configuration violates its strict versioned schema');return result.data;}
-function configFile(explicit?:string){const path=explicit??process.env.GRAYBOX_CLIENT_CONFIG??defaultConfigPath;if(!isAbsolute(path))fail('CONFIG_INVALID','Trusted client config path must be absolute');return resolve(path);}
+export function configFile(explicit?:string){const path=explicit??process.env.GRAYBOX_CLIENT_CONFIG??defaultConfigPath;if(!isAbsolute(path))fail('CONFIG_INVALID','Trusted client config path must be absolute');return resolve(path);}
 export async function readConfig(explicit?:string){
   const path=configFile(explicit),config=parse(configSchema,await json(path,'CONFIG_INVALID'),'CONFIG_INVALID');const ids=new Set<string>();
-  for(const environment of config.environments){if(ids.has(environment.environment_id))fail('CONFIG_AMBIGUOUS','Multiple mappings exist for one environment UUID');ids.add(environment.environment_id);localEndpoint(environment.endpoint);if(!isAbsolute(environment.credentials_file))fail('CONFIG_INVALID','Trusted credential file path must be absolute');}
+  for(const environment of config.environments){if(ids.has(environment.environment_id))fail('CONFIG_AMBIGUOUS','Multiple mappings exist for one environment UUID');ids.add(environment.environment_id);(environment.mode==='cloud'?cloudEndpoint:localEndpoint)(environment.endpoint);if(!isAbsolute(environment.credentials_file))fail('CONFIG_INVALID','Trusted credential file path must be absolute');}
+  if(config.environments.some(e=>e.mode==='cloud')){if(await gitRoot(dirname(await realpath(path))))fail('CONFIG_INVALID','Cloud trusted config must be outside repositories');for(const e of config.environments.filter(e=>e.mode==='cloud'))if(await gitRoot(dirname(await realpath(e.credentials_file))))fail('CONFIG_INVALID','Cloud credentials must be outside repositories');}
   return {path,config};
 }
 async function cwdPath(cwd:string){if(!cwd||!isAbsolute(cwd))fail('CWD_REQUIRED','An explicit absolute cwd is required');try{const path=await realpath(cwd);if(!(await stat(path)).isDirectory())throw new Error();return resolve(path);}catch{fail('CWD_INVALID','Explicit cwd must name an existing readable directory');}}
@@ -32,12 +34,13 @@ async function contextDirectory(root:string){
   const directory=join(root,'.graybox');if(!await exists(directory))return;
   const target=resolve(await realpath(directory)),within=relative(root,target);if(within==='..'||within.startsWith('..'+(process.platform==='win32'?'\\':'/'))||isAbsolute(within))fail('CONTEXT_PATH_INVALID','Repository context directory must remain within the explicit project root');
 }
-async function privateAgent(environment:Environment){const credentials=parse(credentialsSchema,await json(environment.credentials_file,'CREDENTIAL_INVALID'),'CREDENTIAL_INVALID');const agents=credentials.agents.filter(agent=>agent.id===environment.agent_id);if(agents.length!==1)fail('AGENT_REQUIRED','Select exactly one seeded local agent identity');return {agent:agents[0]!,workspace_id:credentials.workspace_id};}
+async function privateAgent(environment:Environment){if(environment.mode==='cloud'){const credentials=parse(cloudCredentialsSchema,await json(environment.credentials_file,'CREDENTIAL_INVALID'),'CREDENTIAL_INVALID');if(credentials.environment_id!==environment.environment_id||credentials.agent.id!==environment.agent_id||Date.parse(credentials.expires_at)<=Date.now())fail('AGENT_REQUIRED','Cloud agent credential expired or mismatched');return {agent:credentials.agent,workspace_id:credentials.workspace_id};}const credentials=parse(credentialsSchema,await json(environment.credentials_file,'CREDENTIAL_INVALID'),'CREDENTIAL_INVALID');const agents=credentials.agents.filter(agent=>agent.id===environment.agent_id);if(agents.length!==1)fail('AGENT_REQUIRED','Select exactly one seeded local agent identity');return {agent:agents[0]!,workspace_id:credentials.workspace_id};}
 export async function environmentClient(environmentId:string,explicit?:string){
   const {path,config}=await readConfig(explicit),environment=config.environments.find(e=>e.environment_id===environmentId);if(!environment)fail('ENVIRONMENT_UNMAPPED','Bound environment has no trusted personal mapping');
-  const {agent,workspace_id}=await privateAgent(environment),api=new ApiClient({endpoint:environment.endpoint,token:agent.token});const health=await api.health();
-  if(health.mode!=='local'||health.environment_id!==environmentId)fail('ENVIRONMENT_MISMATCH','API environment UUID does not match the trusted mapping');
+  const {agent,workspace_id}=await privateAgent(environment),api=new ApiClient({endpoint:environment.endpoint,token:agent.token,mode:environment.mode});const health=await api.health();
+  if(health.mode!==(environment.mode??'local')||health.environment_id!==environmentId)fail('ENVIRONMENT_MISMATCH','API environment UUID does not match the trusted mapping');
   const identity=await api.me();if(identity.agent_id!==environment.agent_id||identity.human_id!==agent.human_id)fail('AGENT_MISMATCH','Server agent identity does not match the selected local agent');
+  if(environment.mode==='cloud'){const workspaces=await api.workspaces();if(!workspaces.some(w=>w.id===workspace_id))fail('WORKSPACE_MISMATCH','Paired workspace is not accessible');}
   return {api,identity,environment,workspace_id,config_path:path};
 }
 async function discover(cwd:string){

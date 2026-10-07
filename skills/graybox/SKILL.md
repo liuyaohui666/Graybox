@@ -1,6 +1,6 @@
 ---
 name: graybox
-description: Use when a user wants to inspect a bound Graybox project, record experiment progress or evidence, submit work for human review, or preview and execute a Graybox batch undo through its local MCP or CLI.
+description: Use when a user wants to inspect a bound Graybox project, record experiment progress or evidence, submit work for human review, or preview and execute a Graybox batch undo through its local or cloud MCP or CLI.
 ---
 
 # Graybox
@@ -16,3 +16,4 @@ Read before updating; preserve unrelated project fields. Experiment status start
 For requested undo, call `batch_undo` with `action:"preview"` first and present its concrete change list. Execute only within the user's authorized undo scope, with the same agent, batch, returned preview token, matching batch revision and a stable undo UUID key. If an execution response is lost, replay that exact execution body/key; its narrow identity/activity checks support the cached receipt even if undo deleted the bound project or active experiment. Do not replace the key or require a new live context read before this exact replay. Preview expires after five minutes; restart invalidates it. A later write/dependency conflict requires a fresh read and decision, never a forced overwrite or partial undo. The contextual adapter rejects batches spanning multiple projects.
 
 Use the CLI's `experiment clear` / explicit `experiment activate` to recover a stale local selection while preserving identity/project checks. The complete command/file formats and project-scoped configuration example are in [clients.md](../../docs/architecture/clients.md). Keep trusted credential/config files private and ignored. Installing this repository skill or host configuration is a separate scoped action; this file does not authorize global settings changes.
+Cloud Agents require explicit HTTPS pairing through auth pair or auth pair-start / auth pair-complete, approved by the human in desktop. Keep personal config outside repositories; never accept repository endpoints/tokens, persist human sessions, or edit global Codex settings. Pair completion returns identity metadata only. Expired/revoked Agents require fresh authorized pairing.
