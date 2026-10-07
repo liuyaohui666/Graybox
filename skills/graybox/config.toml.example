@@ -1,0 +1,9 @@
+# Project-scoped Codex MCP example. Replace all absolute placeholders.
+# Copy only within the explicitly selected project, when host setup is authorized.
+# Tokens remain in the ignored seed credential file referenced by client.json.
+[mcp_servers.graybox]
+command = "C:/ABSOLUTE/Node/node.exe"
+args = ["--import", "file:///C:/ABSOLUTE/Graybox/node_modules/tsx/dist/loader.mjs", "C:/ABSOLUTE/Graybox/apps/mcp/src/server.ts"]
+
+[mcp_servers.graybox.env]
+GRAYBOX_CLIENT_CONFIG = "C:/ABSOLUTE/Graybox/.local/client.json"

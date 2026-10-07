@@ -1,0 +1,18 @@
+---
+name: graybox
+description: Use when a user wants to inspect a bound Graybox project, record experiment progress or evidence, submit work for human review, or preview and execute a Graybox batch undo through its local MCP or CLI.
+---
+
+# Graybox
+
+Resolve `context_resolve` with the user's explicit absolute project/worktree `cwd` before reading or recording work. Never substitute the MCP process directory. The trusted personal mapping owns environment, endpoint and distinct Agent identity; the repository stores only environment/workspace/project UUIDs. A missing, ambiguous, stale or mismatched binding is an error to resolve, not a reason to guess another project or impersonate a person. `entity_get` supplies current revisions. Active experiment is optional for project inspection; ask for a target only when an experiment operation has none.
+
+Use the implemented tools only: `context_resolve`, `entity_get`, `project_write`, `experiment_create`, `experiment_update`, `evidence_append`, `review_submit`, `activity_list`, `batch_undo`. Every tool requires explicit `cwd`. Mutations use the full shared-contract command envelope, including literal `type`, a caller-supplied stable UUID `idempotency_key`, a stable UUID `batch_id`, and current `expected_revision` for update/evidence/review. Use one key per intended operation. Preserve that exact body/key when retrying an uncertain result. A changed intent or revision is a new operation; first read and resolve the conflict. Never silently replay with a fresh key.
+
+Record only observed evidence. Distinguish `passed`, `failed`, `not_run`, `inconclusive` and `agent_reported`, `local_collector`, `ci`. Provide the actual command/summary/exit code for execution evidence, actual commits for Git evidence, or measured values for metrics. This system stores claims; it does not run or independently verify commands. A build or SDK integration pass does not prove visual quality, real Codex host acceptance or human approval. Do not mark unrun work passed or turn a plan into evidence.
+
+Read before updating; preserve unrelated project fields. Experiment status starts `idea`; agents may enter `experimenting` and use `review_submit` to produce an immutable `waiting_for_review` snapshot. Submission closes the batch. Ratings, acceptance and other human judgments belong to the human reviewer. Report the resulting project/experiment/batch IDs and the evidence boundary without disclosing credentials.
+
+For requested undo, call `batch_undo` with `action:"preview"` first and present its concrete change list. Execute only within the user's authorized undo scope, with the same agent, batch, returned preview token, matching batch revision and a stable undo UUID key. Preview expires after five minutes; restart invalidates it. A later write/dependency conflict requires a fresh read and decision, never a forced overwrite or partial undo. The contextual adapter rejects batches spanning multiple projects.
+
+Use the CLI's `experiment clear` / explicit `experiment activate` to recover a stale local selection while preserving identity/project checks. The complete command/file formats and project-scoped configuration example are in [clients.md](../../docs/architecture/clients.md). Keep trusted credential/config files private and ignored. Installing this repository skill or host configuration is a separate scoped action; this file does not authorize global settings changes.
