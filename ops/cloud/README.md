@@ -28,6 +28,8 @@ Nginx443 with restricted allowlist. Never reinstall/upgrade/restart those servic
    storage is memory-only. Do not expose4318/5432 or alter443 existing allowlist.
 8. Open only8443 for selected team IPs or public authenticated pilot when explicitly
    authorized at the firewall step. Preserve existing22/443/80 rules.
+   Check both Tencent firewall and host UFW; an active default-deny UFW needs the
+   same narrow IPv4 TCP8443 rule. Do not disable UFW or broaden existing rules.
 9. Record meeting service same PID/start, old443 HTTP status unchanged, resource caps,
    cloud login/pairing and shared records. Real second-device/team acceptance remains
    a separate user test. Isolated test accounts cannot count as real member acceptance.
