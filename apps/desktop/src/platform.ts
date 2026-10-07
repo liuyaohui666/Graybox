@@ -4,6 +4,14 @@ export interface Profile {
   name: string;
   role: string;
 }
+export class ApiError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+  ) {
+    super(`${code} · ${message}`);
+  }
+}
 export async function profiles(): Promise<Profile[]> {
   if (isTauri()) return invoke("local_profiles");
   const response = await fetch("/__graybox/profiles");
@@ -32,7 +40,6 @@ export async function request<T>(
     });
     result = await response.json();
   }
-  if (result.error)
-    throw new Error(`${result.error.code} · ${result.error.message}`);
+  if (result.error) throw new ApiError(result.error.code, result.error.message);
   return result.data as T;
 }

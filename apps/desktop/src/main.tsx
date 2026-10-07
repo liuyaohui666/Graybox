@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { profiles, request, type Profile } from "./platform.ts";
+import { profiles, request, ApiError, type Profile } from "./platform.ts";
+import { CommandRetry } from "./retry.ts";
 import {
-  command,
   evidenceLabel,
   reviewQueue,
   statusLabel,
@@ -56,11 +56,13 @@ function App() {
     undoModal = useRef<HTMLDialogElement>(null),
     identity = useRef(""),
     selection = useRef("");
-  const pending = useRef<{
-    signature: string;
-    body: ReturnType<typeof command>;
-  } | null>(null);
+  const pending = useRef(new CommandRetry());
   const activeProfile = people.find((p) => p.id === profile);
+  function navigate(next: Page) {
+    selection.current = "";
+    setDetail(null);
+    setPage(next);
+  }
   async function refresh(id = profile) {
     if (!id) return;
     const values = await Promise.all([
@@ -103,7 +105,7 @@ function App() {
     setActivity([]);
     setLoaded(false);
     setError("");
-    pending.current = null;
+    pending.current.clear();
     if (!profile) return;
     const update = () =>
       refresh(profile).catch((e) => {
@@ -138,17 +140,20 @@ function App() {
     }
   }
   async function send(type: string, payload: object, revision?: number) {
-    const signature = JSON.stringify({ type, payload, revision, profile });
-    if (!pending.current || pending.current.signature !== signature)
-      pending.current = { signature, body: command(type, payload, revision) };
-    const result = await request<Project | Experiment>(
-      profile,
-      "/v1/commands",
-      "POST",
-      pending.current.body,
-    );
-    pending.current = null;
-    return result;
+    const body = pending.current.prepare(profile, type, payload, revision);
+    try {
+      const result = await request<Project | Experiment>(
+        profile,
+        "/v1/commands",
+        "POST",
+        body,
+      );
+      pending.current.clear();
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError) pending.current.rejected(error.code);
+      throw error;
+    }
   }
   async function mutate(type: string, payload: object, revision?: number) {
     setBusy(true);
@@ -255,8 +260,14 @@ function App() {
       });
       setUndo(null);
       setDetail(null);
-      await refresh();
       setNotice("批次已撤销。原始记录和补偿日志均已保留。");
+      try {
+        await refresh();
+      } catch {
+        setError(
+          "批次已撤销，但列表刷新失败。请重新读取最新数据，无需重复撤销。",
+        );
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -291,7 +302,7 @@ function App() {
           <span className="live-dot" />
         </div>
         <div className="nav-label">工作台</div>
-        <nav>
+        <nav inert={busy}>
           {(
             [
               ["home", "◫", "首页"],
@@ -304,8 +315,7 @@ function App() {
               key={id}
               className={page === id ? "active" : ""}
               onClick={() => {
-                setPage(id);
-                setDetail(null);
+                navigate(id);
                 setFilter("");
               }}
             >
@@ -437,7 +447,7 @@ function App() {
           {!loaded && !error && <div className="empty">正在读取研发记录…</div>}
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
-              <section className="main-column">
+              <section className="main-column" inert={busy}>
                 {page === "home" && (
                   <>
                     <div className="section-heading">
@@ -490,7 +500,7 @@ function App() {
                       <h2>继续开发</h2>
                       <button
                         className="text-button"
-                        onClick={() => setPage("projects")}
+                        onClick={() => navigate("projects")}
                       >
                         全部项目 →
                       </button>
@@ -501,7 +511,7 @@ function App() {
                           className="project-card"
                           key={p.id}
                           onClick={() => {
-                            setPage("experiments");
+                            navigate("experiments");
                             setProjectFilter(p.id);
                           }}
                         >
@@ -524,7 +534,7 @@ function App() {
                       <h2>最近实验</h2>
                       <button
                         className="text-button"
-                        onClick={() => setPage("experiments")}
+                        onClick={() => navigate("experiments")}
                       >
                         查看全部 →
                       </button>
@@ -539,7 +549,7 @@ function App() {
                         key={p.id}
                         onClick={() => {
                           setProjectFilter(p.id);
-                          setPage("experiments");
+                          navigate("experiments");
                         }}
                       >
                         <div className="project-symbol">
@@ -687,6 +697,7 @@ function App() {
                     <span>实验详情</span>
                     <button
                       aria-label="关闭实验详情"
+                      disabled={busy}
                       onClick={() => {
                         setDetail(null);
                         selection.current = "";
@@ -713,7 +724,12 @@ function App() {
                     <p className="prose">{detail.goal}</p>
                     <div className="label-action">
                       <h4>本次总结</h4>
-                      <button onClick={() => setDialog("summary")}>编辑</button>
+                      <button
+                        disabled={busy}
+                        onClick={() => setDialog("summary")}
+                      >
+                        编辑
+                      </button>
                     </div>
                     <p className="prose">
                       {detail.summary || "尚未记录总结。"}
@@ -725,7 +741,10 @@ function App() {
                       <h4>
                         技术证据 <span>{detail.evidence?.length ?? 0}</span>
                       </h4>
-                      <button onClick={() => setDialog("evidence")}>
+                      <button
+                        disabled={busy}
+                        onClick={() => setDialog("evidence")}
+                      >
                         ＋ 记录
                       </button>
                     </div>
@@ -773,7 +792,8 @@ function App() {
                       </details>
                     ))}
                     <div className="detail-actions">
-                      {detail.status === "idea" && (
+                      {(detail.status === "idea" ||
+                        detail.status === "waiting_for_review") && (
                         <button
                           className="secondary"
                           disabled={busy}
@@ -785,7 +805,9 @@ function App() {
                             )
                           }
                         >
-                          开始实验
+                          {detail.status === "waiting_for_review"
+                            ? "继续实验"
+                            : "开始实验"}
                         </button>
                       )}
                       <button
