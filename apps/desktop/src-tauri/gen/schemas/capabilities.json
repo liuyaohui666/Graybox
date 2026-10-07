@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Local Graybox window with no filesystem or shell plugin access","local":true,"windows":["main"],"permissions":["core:default"]}}

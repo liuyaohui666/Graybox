@@ -1,0 +1,1042 @@
+import React, { useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { profiles, request, type Profile } from "./platform.ts";
+import {
+  command,
+  evidenceLabel,
+  reviewQueue,
+  statusLabel,
+  type Project,
+  type Experiment,
+  type Activity,
+  type UndoPreview,
+} from "./model.ts";
+import "./styles.css";
+
+type Page = "home" | "projects" | "experiments" | "activity";
+type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
+const typeNames: Record<string, string> = {
+  git: "Git 记录",
+  build: "构建",
+  test: "测试",
+  launch: "启动",
+  metric: "指标",
+  change: "变更",
+};
+const date = (s?: string) =>
+  s
+    ? new Date(s).toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
+
+function App() {
+  const [people, setPeople] = useState<Profile[]>([]),
+    [profile, setProfile] = useState("");
+  const [page, setPage] = useState<Page>("home"),
+    [projects, setProjects] = useState<Project[]>([]),
+    [experiments, setExperiments] = useState<Experiment[]>([]),
+    [activity, setActivity] = useState<Activity[]>([]);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>(
+      [],
+    ),
+    [detail, setDetail] = useState<Experiment | null>(null),
+    [projectFilter, setProjectFilter] = useState("");
+  const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false),
+    [loaded, setLoaded] = useState(false),
+    [filter, setFilter] = useState("");
+  const [dialog, setDialog] = useState<DialogKind>(null),
+    [undo, setUndo] = useState<UndoPreview | null>(null);
+  const modal = useRef<HTMLDialogElement>(null),
+    undoModal = useRef<HTMLDialogElement>(null),
+    identity = useRef(""),
+    selection = useRef("");
+  const pending = useRef<{
+    signature: string;
+    body: ReturnType<typeof command>;
+  } | null>(null);
+  const activeProfile = people.find((p) => p.id === profile);
+  async function refresh(id = profile) {
+    if (!id) return;
+    const values = await Promise.all([
+      request<Project[]>(id, "/v1/projects"),
+      request<Experiment[]>(id, "/v1/experiments"),
+      request<Activity[]>(id, "/v1/activity"),
+      request<{ id: string; name: string }[]>(id, "/v1/workspaces"),
+    ]);
+    if (identity.current !== id) return;
+    setProjects(values[0]);
+    setExperiments(
+      values[1].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    );
+    setActivity(
+      values[2].sort((a, b) =>
+        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+      ),
+    );
+    setWorkspaces(values[3]);
+    setLoaded(true);
+  }
+  useEffect(() => {
+    profiles()
+      .then((ps) => {
+        setPeople(ps);
+        if (ps[0]) setProfile(ps[0].id);
+      })
+      .catch((e) => setError(String(e.message)));
+  }, []);
+  useEffect(() => {
+    identity.current = profile;
+    selection.current = "";
+    setDetail(null);
+    setDialog(null);
+    setUndo(null);
+    setProjectFilter("");
+    setWorkspaces([]);
+    setProjects([]);
+    setExperiments([]);
+    setActivity([]);
+    setLoaded(false);
+    setError("");
+    pending.current = null;
+    if (!profile) return;
+    const update = () =>
+      refresh(profile).catch((e) => {
+        if (identity.current === profile) setError(e.message);
+      });
+    update();
+    const interval = setInterval(update, 15000);
+    window.addEventListener("focus", update);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", update);
+    };
+  }, [profile]);
+  useEffect(() => {
+    if (dialog) modal.current?.showModal();
+    else modal.current?.close();
+  }, [dialog]);
+  useEffect(() => {
+    if (undo) undoModal.current?.showModal();
+    else undoModal.current?.close();
+  }, [undo]);
+  async function showExperiment(id: string) {
+    const requestedProfile = profile;
+    selection.current = id;
+    setError("");
+    try {
+      const d = await request<Experiment>(profile, "/v1/experiments/" + id);
+      if (selection.current === id && identity.current === requestedProfile)
+        setDetail(d);
+    } catch (e) {
+      if (identity.current === requestedProfile) setError((e as Error).message);
+    }
+  }
+  async function send(type: string, payload: object, revision?: number) {
+    const signature = JSON.stringify({ type, payload, revision, profile });
+    if (!pending.current || pending.current.signature !== signature)
+      pending.current = { signature, body: command(type, payload, revision) };
+    const result = await request<Project | Experiment>(
+      profile,
+      "/v1/commands",
+      "POST",
+      pending.current.body,
+    );
+    pending.current = null;
+    return result;
+  }
+  async function mutate(type: string, payload: object, revision?: number) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await send(type, payload, revision);
+      setDialog(null);
+      setNotice(
+        type === "review_submit"
+          ? "已提交验收快照，等待人工判断。"
+          : "记录已保存。",
+      );
+      if ("series_id" in result) setDetail(result);
+      try {
+        await refresh();
+        if ("series_id" in result) await showExperiment(result.id);
+      } catch {
+        setError(
+          "记录已保存，但列表刷新失败。请重新读取最新数据，无需重复保存。",
+        );
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function saveForm(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const value = (k: string) => String(f.get(k) ?? "").trim();
+    if (dialog === "project")
+      void mutate("project_create", {
+        workspace_id: value("workspace"),
+        name: value("name"),
+        description: value("description"),
+      });
+    if (dialog === "experiment")
+      void mutate("experiment_create", {
+        project_id: value("project"),
+        series_name: value("series"),
+        name: value("name"),
+        goal: value("goal"),
+      });
+    if (dialog === "summary" && detail)
+      void mutate(
+        "experiment_update",
+        {
+          id: detail.id,
+          summary: value("summary"),
+          change_summary: value("changes"),
+        },
+        detail.revision,
+      );
+    if (dialog === "evidence" && detail) {
+      const type = value("type");
+      const details =
+        type === "change"
+          ? { summary: value("summary") }
+          : {
+              command: value("command"),
+              summary: value("summary"),
+              ...(value("exit_code") !== ""
+                ? { exit_code: Number(value("exit_code")) }
+                : {}),
+            };
+      void mutate(
+        "evidence_append",
+        {
+          experiment_id: detail.id,
+          type,
+          source_kind: "agent_reported",
+          result: value("result"),
+          details,
+        },
+        detail.revision,
+      );
+    }
+  }
+  async function previewUndo(batchId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      setUndo(
+        await request(profile, `/v1/batches/${batchId}/preview`, "POST", {}),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function executeUndo() {
+    if (!undo) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request(profile, `/v1/batches/${undo.batch_id}/undo`, "POST", {
+        expected_batch_revision: undo.batch_revision,
+        preview_token: undo.preview_token,
+        idempotency_key:
+          undo.request_id ?? (undo.request_id = crypto.randomUUID()),
+      });
+      setUndo(null);
+      setDetail(null);
+      await refresh();
+      setNotice("批次已撤销。原始记录和补偿日志均已保留。");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const waiting = reviewQueue(experiments),
+    view = experiments.filter(
+      (e) =>
+        (!projectFilter || e.project_id === projectFilter) &&
+        (!filter ||
+          `${e.name} ${e.goal} ${e.summary ?? ""}`
+            .toLowerCase()
+            .includes(filter.toLowerCase())),
+    );
+  const projectName = (id: string) =>
+    projects.find((p) => p.id === id)?.name ?? "项目";
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brandmark">▧</span>
+          <div>
+            Graybox<small>研发记忆工作台</small>
+          </div>
+        </div>
+        <div className="workspace">
+          <span className="workspace-icon">G</span>
+          <div>
+            本地研发空间<small>{workspaces[0]?.name ?? "连接中"}</small>
+          </div>
+          <span className="live-dot" />
+        </div>
+        <div className="nav-label">工作台</div>
+        <nav>
+          {(
+            [
+              ["home", "◫", "首页"],
+              ["projects", "▣", "项目"],
+              ["experiments", "◇", "实验"],
+              ["activity", "≋", "活动记录"],
+            ] as const
+          ).map(([id, icon, label]) => (
+            <button
+              key={id}
+              className={page === id ? "active" : ""}
+              onClick={() => {
+                setPage(id);
+                setDetail(null);
+                setFilter("");
+              }}
+            >
+              <span>{icon}</span>
+              {label}
+              {id === "home" && waiting.length > 0 && <b>{waiting.length}</b>}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-note">
+          <span>记录事实，留住判断。</span>
+          <p>每一份结论，都能回到当时的实验与证据。</p>
+        </div>
+        <div className="profile">
+          <span className="avatar">
+            {activeProfile?.name.slice(0, 1) ?? "灰"}
+          </span>
+          <label>
+            本地测试身份
+            <select
+              aria-label="切换本地测试身份"
+              value={profile}
+              disabled={busy}
+              onChange={(e) => setProfile(e.target.value)}
+            >
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.role === "owner" ? " · Owner" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </aside>
+      <main>
+        <header className="topbar">
+          <div>
+            <span className="muted">工作空间</span>
+            <span className="crumb">/</span>
+            {
+              {
+                home: "概览",
+                projects: "项目",
+                experiments: "实验",
+                activity: "活动记录",
+              }[page]
+            }
+          </div>
+          <span className="local-status">
+            <span className="live-dot" />
+            本地开发 · 数据保存在此电脑
+          </span>
+        </header>
+        <div className="content">
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">
+                {
+                  {
+                    home: "RESEARCH MEMORY",
+                    projects: "YOUR PROJECTS",
+                    experiments: "EXPERIMENT LOG",
+                    activity: "ACTIVITY TRAIL",
+                  }[page]
+                }
+              </div>
+              <h1>
+                {
+                  {
+                    home: "让每次尝试，都有来处。",
+                    projects: "项目",
+                    experiments: "实验记录",
+                    activity: "谁在什么时候，改变了什么。",
+                  }[page]
+                }
+              </h1>
+              <p>
+                {
+                  {
+                    home: "从结果继续，让下一次实验少走一点弯路。",
+                    projects: "长期工程与作品，是实验的起点。",
+                    experiments: "保存不同版本，也保留当时的目标与判断。",
+                    activity: "变更与撤销都留在这里。",
+                  }[page]
+                }
+              </p>
+            </div>
+            <button
+              className="primary"
+              disabled={!loaded || busy}
+              onClick={() =>
+                setDialog(
+                  page === "projects" || projects.length === 0
+                    ? "project"
+                    : "experiment",
+                )
+              }
+            >
+              ＋{" "}
+              {page === "projects" || projects.length === 0
+                ? "新建项目"
+                : "新建实验"}
+            </button>
+          </div>
+          {error && (
+            <div className="error" role="alert">
+              <strong>操作未完成</strong>
+              <span>{error}</span>
+              <button
+                onClick={() => {
+                  setError("");
+                  void refresh().catch((e) => setError(e.message));
+                  if (detail) void showExperiment(detail.id);
+                }}
+              >
+                重新读取最新数据
+              </button>
+            </div>
+          )}
+          {notice && (
+            <div className="notice" role="status">
+              ✓ {notice}
+              <button aria-label="关闭提示" onClick={() => setNotice("")}>
+                ×
+              </button>
+            </div>
+          )}
+          {!loaded && !error && <div className="empty">正在读取研发记录…</div>}
+          {loaded && (
+            <div className={detail ? "with-detail" : "without-detail"}>
+              <section className="main-column">
+                {page === "home" && (
+                  <>
+                    <div className="section-heading">
+                      <h2>
+                        <i className="signal" />
+                        等你判断{" "}
+                        <span>
+                          {waiting.length.toString().padStart(2, "0")}
+                        </span>
+                      </h2>
+                      <span className="muted">机器记录之后，是你的判断</span>
+                    </div>
+                    {waiting.length === 0 ? (
+                      <div className="empty waiting-empty">
+                        <span>◇</span>
+                        <h3>暂时没有待验收实验</h3>
+                        <p>让 Codex 完成记录并提交验收，结果就会来到这里。</p>
+                      </div>
+                    ) : (
+                      <div className="review-list">
+                        {waiting.map((e) => (
+                          <button
+                            className="review-card"
+                            key={e.id}
+                            onClick={() => void showExperiment(e.id)}
+                          >
+                            <div className="review-top">
+                              <span className="project-path">
+                                {projectName(e.project_id)}
+                              </span>
+                              <span className="status waiting_for_review">
+                                待验收
+                              </span>
+                            </div>
+                            <div className="review-title">
+                              <span className="version">v{e.version}</span>
+                              <h3>{e.name}</h3>
+                              <span className="arrow">↗</span>
+                            </div>
+                            <p>{e.goal}</p>
+                            <div className="review-footer">
+                              <span>查看提交快照与技术记录</span>
+                              <span>{date(e.updated_at)}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="section-heading spaced">
+                      <h2>继续开发</h2>
+                      <button
+                        className="text-button"
+                        onClick={() => setPage("projects")}
+                      >
+                        全部项目 →
+                      </button>
+                    </div>
+                    <div className="project-grid">
+                      {projects.slice(0, 3).map((p, i) => (
+                        <button
+                          className="project-card"
+                          key={p.id}
+                          onClick={() => {
+                            setPage("experiments");
+                            setProjectFilter(p.id);
+                          }}
+                        >
+                          <div className="project-symbol">
+                            {["▧", "◇", "⌘"][i % 3]}
+                          </div>
+                          <h3>{p.name}</h3>
+                          <p>{p.description || "尚未填写项目说明"}</p>
+                          <span>
+                            {
+                              experiments.filter((e) => e.project_id === p.id)
+                                .length
+                            }{" "}
+                            个实验 <b>→</b>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="section-heading spaced">
+                      <h2>最近实验</h2>
+                      <button
+                        className="text-button"
+                        onClick={() => setPage("experiments")}
+                      >
+                        查看全部 →
+                      </button>
+                    </div>
+                  </>
+                )}
+                {page === "projects" && (
+                  <div className="project-grid large">
+                    {projects.map((p, i) => (
+                      <button
+                        className="project-card"
+                        key={p.id}
+                        onClick={() => {
+                          setProjectFilter(p.id);
+                          setPage("experiments");
+                        }}
+                      >
+                        <div className="project-symbol">
+                          {["▧", "◇", "⌘"][i % 3]}
+                        </div>
+                        <h3>{p.name}</h3>
+                        <p>{p.description || "尚未填写说明"}</p>
+                        <span>
+                          {
+                            experiments.filter((e) => e.project_id === p.id)
+                              .length
+                          }{" "}
+                          个实验 <b>→</b>
+                        </span>
+                      </button>
+                    ))}
+                    {projects.length === 0 && (
+                      <div className="empty">
+                        建立第一个项目，开始积累研发记忆。
+                      </div>
+                    )}
+                  </div>
+                )}
+                {page === "experiments" && (
+                  <div className="filters">
+                    <input
+                      aria-label="筛选实验"
+                      placeholder="筛选名称、目标或摘要…"
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                    />
+                    <select
+                      aria-label="按项目筛选"
+                      value={projectFilter}
+                      onChange={(e) => setProjectFilter(e.target.value)}
+                    >
+                      <option value="">所有项目</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {(page === "home" || page === "experiments") && (
+                  <div className="experiment-table">
+                    <div className="table-head">
+                      <span>实验 / 项目</span>
+                      <span>状态</span>
+                      <span>最近记录</span>
+                    </div>
+                    {(page === "home" ? experiments.slice(0, 6) : view).map(
+                      (e) => (
+                        <button
+                          key={e.id}
+                          className={
+                            "experiment-row " +
+                            (detail?.id === e.id ? "selected" : "")
+                          }
+                          onClick={() => void showExperiment(e.id)}
+                        >
+                          <span className="row-name">
+                            <span className="mini-version">v{e.version}</span>
+                            <span>
+                              <strong>{e.name}</strong>
+                              <small>{projectName(e.project_id)}</small>
+                            </span>
+                          </span>
+                          <span>
+                            <span className={"status " + e.status}>
+                              {statusLabel(e.status)}
+                            </span>
+                          </span>
+                          <time>{date(e.updated_at)}</time>
+                        </button>
+                      ),
+                    )}
+                    {(page === "home" ? experiments : view).length === 0 && (
+                      <div className="empty compact">
+                        还没有符合条件的实验。
+                      </div>
+                    )}
+                  </div>
+                )}
+                {page === "activity" && (
+                  <div className="activity-list">
+                    {activity.map((a) => (
+                      <article key={a.id}>
+                        <span className="timeline-dot" />
+                        <div>
+                          <strong>
+                            {(
+                              {
+                                project_create: "新建项目",
+                                project_update: "更新项目",
+                                experiment_create: "新建实验",
+                                experiment_update: "更新实验",
+                                evidence_append: "追加技术证据",
+                                review_submit: "提交待验收",
+                                batch_undo: "撤销批次",
+                              } as Record<string, string>
+                            )[a.type] ?? a.type}
+                          </strong>
+                          <p>
+                            {a.entity_type} · {a.entity_id.slice(0, 8)}
+                          </p>
+                          <small>
+                            {people.find((p) => p.id === a.human_id)?.name ??
+                              a.human_id.slice(0, 8)}
+                            {a.agent_id ? " · Agent 写入" : " · 人类操作"} ·{" "}
+                            {date(a.created_at ?? a.timestamp)}
+                          </small>
+                          <details>
+                            <summary>查看变更</summary>
+                            <pre>
+                              {JSON.stringify(
+                                { before: a.before, after: a.after },
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          </details>
+                        </div>
+                        {a.batch_id && (
+                          <button
+                            className="secondary small"
+                            disabled={busy}
+                            onClick={() => void previewUndo(a.batch_id)}
+                          >
+                            预览撤销
+                          </button>
+                        )}
+                      </article>
+                    ))}
+                    {!activity.length && (
+                      <div className="empty">还没有活动记录。</div>
+                    )}
+                  </div>
+                )}
+              </section>
+              {detail && (
+                <aside className="detail-panel">
+                  <div className="detail-top">
+                    <span>实验详情</span>
+                    <button
+                      aria-label="关闭实验详情"
+                      onClick={() => {
+                        setDetail(null);
+                        selection.current = "";
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="detail-body">
+                    <span className="project-path">
+                      {projectName(detail.project_id)}
+                    </span>
+                    <h2>
+                      {detail.name}{" "}
+                      <span className="version">v{detail.version}</span>
+                    </h2>
+                    <div className="detail-meta">
+                      <span className={"status " + detail.status}>
+                        {statusLabel(detail.status)}
+                      </span>
+                      <span>记录修订 {detail.revision}</span>
+                    </div>
+                    <h4>实验目标</h4>
+                    <p className="prose">{detail.goal}</p>
+                    <div className="label-action">
+                      <h4>本次总结</h4>
+                      <button onClick={() => setDialog("summary")}>编辑</button>
+                    </div>
+                    <p className="prose">
+                      {detail.summary || "尚未记录总结。"}
+                    </p>
+                    {detail.change_summary && (
+                      <p className="prose muted">{detail.change_summary}</p>
+                    )}
+                    <div className="label-action">
+                      <h4>
+                        技术证据 <span>{detail.evidence?.length ?? 0}</span>
+                      </h4>
+                      <button onClick={() => setDialog("evidence")}>
+                        ＋ 记录
+                      </button>
+                    </div>
+                    <div className="evidence-list">
+                      {detail.evidence?.map((e) => (
+                        <div key={e.id} className="evidence">
+                          <div>
+                            <strong>{typeNames[e.type] ?? e.type}</strong>
+                            <span className={"result " + e.result}>
+                              {evidenceLabel(e.result)}
+                            </span>
+                          </div>
+                          <p>
+                            {String(
+                              e.details.summary ??
+                                e.details.name ??
+                                "Git 提交记录",
+                            )}
+                          </p>
+                          {Boolean(e.details.command) && (
+                            <code>{String(e.details.command)}</code>
+                          )}
+                          <small>
+                            {e.source_kind === "agent_reported"
+                              ? "提交者报告，未独立复核"
+                              : e.source_kind}{" "}
+                            · {date(e.created_at)}
+                          </small>
+                        </div>
+                      ))}
+                      {!detail.evidence?.length && (
+                        <p className="muted small-copy">
+                          尚无证据。没有执行的验证应明确记为“未执行”。
+                        </p>
+                      )}
+                    </div>
+                    <h4>人工验收</h4>
+                    <p className="small-copy muted">
+                      技术报告与人工判断分别保存。构建或测试通过，不代表玩法已经验收。
+                    </p>
+                    {detail.submissions?.map((s) => (
+                      <details className="submission" key={s.id}>
+                        <summary>验收快照 · {date(s.created_at)}</summary>
+                        <pre>{JSON.stringify(s.snapshot, null, 2)}</pre>
+                      </details>
+                    ))}
+                    <div className="detail-actions">
+                      {detail.status === "idea" && (
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            void mutate(
+                              "experiment_update",
+                              { id: detail.id, status: "experimenting" },
+                              detail.revision,
+                            )
+                          }
+                        >
+                          开始实验
+                        </button>
+                      )}
+                      <button
+                        className="primary"
+                        disabled={
+                          busy || detail.status === "waiting_for_review"
+                        }
+                        onClick={() =>
+                          void mutate(
+                            "review_submit",
+                            { experiment_id: detail.id },
+                            detail.revision,
+                          )
+                        }
+                      >
+                        {detail.status === "waiting_for_review"
+                          ? "已提交 · 等待判断"
+                          : "提交待验收 →"}
+                      </button>
+                    </div>
+                  </div>
+                </aside>
+              )}
+            </div>
+          )}
+          <footer className="footer">
+            <span>
+              GRAYBOX <b>·</b> 留下结果，也留下为什么。
+            </span>
+            <span>本地版本 0.1 · 自动刷新 15 秒</span>
+          </footer>
+        </div>
+      </main>
+      <dialog ref={modal} onCancel={() => setDialog(null)}>
+        <form onSubmit={saveForm}>
+          <div className="modal-heading">
+            <h2>
+              {
+                {
+                  project: "新建项目",
+                  experiment: "开启一次实验",
+                  summary: "记录本次总结",
+                  evidence: "添加技术证据",
+                }[dialog ?? "project"]
+              }
+            </h2>
+            <button
+              type="button"
+              aria-label="关闭"
+              onClick={() => setDialog(null)}
+            >
+              ×
+            </button>
+          </div>
+          {dialog === "project" && (
+            <>
+              <label>
+                所属空间
+                <select name="workspace">
+                  {workspaces.map((w) => (
+                    <option value={w.id} key={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                项目名称
+                <input
+                  name="name"
+                  required
+                  maxLength={120}
+                  placeholder="例如：菲比啾比"
+                />
+              </label>
+              <label>
+                项目说明
+                <textarea name="description" rows={3} />
+              </label>
+            </>
+          )}
+          {dialog === "experiment" && (
+            <>
+              <label>
+                所属项目
+                <select name="project" defaultValue={projectFilter}>
+                  {projects.map((p) => (
+                    <option value={p.id} key={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                实验方向
+                <input
+                  name="series"
+                  required
+                  maxLength={120}
+                  placeholder="例如：礼帽驯服"
+                />
+              </label>
+              <label>
+                本次尝试名称
+                <input
+                  name="name"
+                  required
+                  maxLength={120}
+                  placeholder="例如：距离与交互反馈"
+                />
+              </label>
+              <label>
+                要验证什么？
+                <textarea
+                  name="goal"
+                  required
+                  rows={3}
+                  placeholder="写清这一版希望验证的目标。"
+                />
+              </label>
+            </>
+          )}
+          {dialog === "summary" && (
+            <>
+              <label>
+                本次总结
+                <textarea
+                  name="summary"
+                  rows={5}
+                  defaultValue={detail?.summary}
+                />
+              </label>
+              <label>
+                修改内容
+                <textarea
+                  name="changes"
+                  rows={3}
+                  defaultValue={detail?.change_summary}
+                />
+              </label>
+            </>
+          )}
+          {dialog === "evidence" && (
+            <>
+              <div className="form-row">
+                <label>
+                  证据类型
+                  <select name="type">
+                    <option value="test">测试</option>
+                    <option value="build">构建</option>
+                    <option value="launch">启动</option>
+                    <option value="change">变更说明</option>
+                  </select>
+                </label>
+                <label>
+                  报告结果
+                  <select name="result" defaultValue="not_run">
+                    <option value="not_run">未执行</option>
+                    <option value="passed">报告通过</option>
+                    <option value="failed">报告失败</option>
+                    <option value="inconclusive">尚无结论</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                运行命令
+                <input name="command" placeholder="按实际执行情况填写" />
+              </label>
+              <label>
+                退出码（如有）
+                <input name="exit_code" type="number" />
+              </label>
+              <label>
+                结果与验证范围
+                <textarea
+                  name="summary"
+                  required
+                  rows={3}
+                  placeholder="只记录实际观察到的结果。"
+                />
+              </label>
+            </>
+          )}
+          {error && (
+            <p className="modal-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setDialog(null)}
+              disabled={busy}
+            >
+              取消
+            </button>
+            <button className="primary" disabled={busy}>
+              {busy ? "保存中…" : "保存记录"}
+            </button>
+          </div>
+        </form>
+      </dialog>
+      <dialog ref={undoModal} onCancel={() => setUndo(null)}>
+        <div className="modal-heading">
+          <h2>撤销批次预览</h2>
+          <button aria-label="关闭" onClick={() => setUndo(null)}>
+            ×
+          </button>
+        </div>
+        <p className="prose">
+          下面的变更将整体补偿。若有人继续修改，服务器会阻止此次撤销。
+        </p>
+        <div className="undo-changes">
+          {undo?.changes?.map((c) => (
+            <div key={c.entity_type + c.entity_id}>
+              <strong>{c.entity_type}</strong>
+              <code>{c.entity_id.slice(0, 8)}</code>
+              <span>{c.before ? "恢复此前内容" : "移入回收状态"}</span>
+              <details>
+                <summary>查看撤销前后内容</summary>
+                <pre>
+                  {JSON.stringify({ 当前: c.after, 撤销后: c.before }, null, 2)}
+                </pre>
+              </details>
+            </div>
+          ))}
+        </div>
+        {error && <p className="modal-error">{error}</p>}
+        <div className="modal-actions">
+          <button
+            className="secondary"
+            onClick={() => setUndo(null)}
+            disabled={busy}
+          >
+            保留变更
+          </button>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() => void executeUndo()}
+          >
+            {busy ? "撤销中…" : "执行本批撤销"}
+          </button>
+        </div>
+      </dialog>
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
