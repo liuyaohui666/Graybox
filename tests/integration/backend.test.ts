@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { buildApp } from '../../apps/api/src/app.ts';
 import { migrate } from '../../packages/db/src/migrate.ts';
 import { seedDatabase,seedDemonstration } from '../../packages/db/src/seed.ts';
+import { Service } from '../../packages/core/src/service.ts';
 
 config({ quiet: true });
 const url = process.env.GRAYBOX_TEST_DATABASE_URL;
@@ -66,7 +67,7 @@ describe('real PostgreSQL M1 invariants',()=> {
     const p=await project(); const e=await experiment(p.id);
     const limited=fixture.tokens.restricted_agent;
     expect((await req('GET','/v1/projects',undefined,limited)).data).toEqual([]);
-    expect((await req('GET',`/v1/experiments/${e.id}`,undefined,limited)).status).toBe(403);
+    expect((await req('GET',`/v1/experiments/${e.id}`,undefined,limited)).status).toBe(404);
     expect((await command('project_update',{id:p.id,name:'No'},batch(),p.revision,limited)).status).toBe(403);
   });
   test('revoked credentials are rejected',async()=> {
@@ -117,7 +118,7 @@ describe('real PostgreSQL M1 invariants',()=> {
     expect(snapshot.commits).toEqual([{sha:'abcdef0'}]);
   });
   test('schema grants deny audit mutation evidence mutation and DDL',async()=> {
-    for(const sql of ['DELETE FROM graybox.activities','UPDATE graybox.activities SET type=type','DELETE FROM graybox.evidence','CREATE TABLE graybox.bad(id int)','CREATE TABLE public.bad(id int)']) {
+    for(const sql of ['DELETE FROM graybox.activities','UPDATE graybox.activities SET type=type','DELETE FROM graybox.evidence','UPDATE graybox.credentials SET project_ids=project_ids','CREATE TABLE graybox.bad(id int)','CREATE TABLE public.bad(id int)']) {
       await expect(runtime.query(sql)).rejects.toHaveProperty('code','42501');
     }
   });
@@ -205,5 +206,95 @@ describe('real PostgreSQL M1 invariants',()=> {
     const malformed={data:{...pr.data,preview_token:`${payload}.é${signature.slice(1)}`}};
     expect((await undo(b,malformed)).error.code).toBe('PREVIEW_INVALID');
     expect((await undo(b,{data:{...pr.data,preview_token:pr.data.preview_token+'.extra'}})).error.code).toBe('PREVIEW_INVALID');
+  });
+  test('regression interleaved outside updates block batch undo even after own final write',async()=> {
+    const p=await project();const a=batch();let revision=p.revision;
+    revision=(await command('project_update',{id:p.id,name:'A first'},a,revision)).data.revision;
+    revision=(await command('project_update',{id:p.id,name:'B protected'},batch(),revision)).data.revision;
+    revision=(await command('project_update',{id:p.id,name:'A final'},a,revision)).data.revision;
+    const activityCount=(await admin.query('SELECT count(*)::int n FROM graybox.activities')).rows[0].n;
+    const pr=await preview(a);expect(pr.status).toBe(409);expect(pr.error.code).toBe('UNDO_CONFLICT');
+    expect((await req('GET',`/v1/projects/${p.id}`)).data.revision).toBe(revision);
+    expect((await admin.query('SELECT count(*)::int n FROM graybox.activities')).rows[0].n).toBe(activityCount);
+    expect((await admin.query('SELECT undone_at FROM graybox.batches WHERE id=$1',[a])).rows[0].undone_at).toBeNull();
+    expect((await admin.query('SELECT count(*)::int n FROM graybox.tombstones')).rows[0].n).toBe(0);
+    expect((await admin.query('SELECT count(*)::int n FROM graybox.batches WHERE compensates=$1',[a])).rows[0].n).toBe(0);
+  });
+  test('regression creation with outside edit and final own edit cannot be removed',async()=> {
+    const a=batch();const p=await project(a);
+    const external=(await command('project_update',{id:p.id,name:'B protected'},batch(),p.revision)).data;
+    await command('project_update',{id:p.id,name:'A final'},a,external.revision);
+    expect((await preview(a)).status).toBe(409);expect((await req('GET',`/v1/projects/${p.id}`)).status).toBe(200);
+    expect((await admin.query('SELECT undone_at FROM graybox.batches WHERE id=$1',[a])).rows[0].undone_at).toBeNull();
+    expect((await admin.query('SELECT count(*)::int n FROM graybox.batches WHERE compensates=$1',[a])).rows[0].n).toBe(0);
+  });
+  test('regression out of scope and absent experiment reads have identical response',async()=> {
+    const p=await project();const e=await experiment(p.id);const auth=fixture.tokens.restricted_agent;
+    const known=await req('GET',`/v1/experiments/${e.id}`,undefined,auth),missing=await req('GET',`/v1/experiments/${randomUUID()}`,undefined,auth);
+    expect(known).toEqual(missing);expect(known.status).toBe(404);
+  });
+  test('regression cached closed batch retry rechecks current project scope',async()=> {
+    const p=await project();const b=batch();const e=await experiment(p.id,b);
+    const body=envelope('review_submit',{experiment_id:e.id},b,e.revision);
+    expect((await req('POST','/v1/commands',body)).status).toBe(200);
+    await admin.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");
+    const retry=await req('POST','/v1/commands',body);expect(retry.status).toBe(403);expect(retry.data).toBeUndefined();
+  });
+  test('regression stale authenticated principal cannot mutate after scope shrink',async()=> {
+    const p=await project();const service=new Service(runtime);const principal=await service.authenticate(token);
+    await admin.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");
+    await expect(service.command(principal,envelope('project_update',{id:p.id,name:'Forbidden'},batch(),p.revision))).rejects.toMatchObject({status:403});
+    expect((await admin.query('SELECT revision FROM graybox.projects WHERE id=$1',[p.id])).rows[0].revision).toBe(p.revision);
+  });
+  test('regression stale authenticated principal cannot replay private snapshot or revoke bypass',async()=> {
+    const service=new Service(runtime);const principal=await service.authenticate(token);const body=envelope('project_create',{workspace_id:fixture.workspace_id,name:'Private'});
+    await service.command(principal,body);
+    await admin.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");
+    await expect(service.command(principal,body)).rejects.toMatchObject({status:403});
+    await admin.query("UPDATE graybox.credentials SET revoked_at=now() WHERE label='owner_agent'");
+    await expect(service.command(principal,body)).rejects.toMatchObject({status:401});
+  });
+  test('regression queued HTTP command refreshes scope after acquiring domain lock',async()=> {
+    const p=await project();const blocker=await admin.connect();let pending:ReturnType<typeof req>|undefined;
+    const counts=(await admin.query('SELECT (SELECT count(*) FROM graybox.activities)::int activities,(SELECT count(*) FROM graybox.idempotency)::int keys')).rows[0];
+    try {
+      await blocker.query('BEGIN');await blocker.query('SELECT pg_advisory_xact_lock(77321)');
+      pending=command('project_update',{id:p.id,name:'Forbidden queued write'},batch(),p.revision);
+      let queued=false;
+      for(let i=0;i<300;i++) {if((await admin.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'")).rowCount) {queued=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}
+      expect(queued).toBe(true);
+      await blocker.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");await blocker.query('COMMIT');
+      expect((await pending).status).toBe(403);
+      expect((await admin.query('SELECT data,revision FROM graybox.projects WHERE id=$1',[p.id])).rows[0]).toMatchObject({data:{name:'P'},revision:p.revision});
+      expect((await admin.query('SELECT (SELECT count(*) FROM graybox.activities)::int activities,(SELECT count(*) FROM graybox.idempotency)::int keys')).rows[0]).toEqual(counts);
+    } finally {await blocker.query('ROLLBACK');blocker.release();await pending;}
+  });
+  test('regression queued HTTP undo refreshes scope and commits no compensation',async()=> {
+    const b=batch();const p=await project(b);const pr=await preview(b);const blocker=await admin.connect();let pending:ReturnType<typeof undo>|undefined;
+    try {
+      await blocker.query('BEGIN');await blocker.query('SELECT pg_advisory_xact_lock(77321)');pending=undo(b,pr);
+      let queued=false;
+      for(let i=0;i<300;i++) {if((await admin.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'")).rowCount) {queued=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}
+      expect(queued).toBe(true);await blocker.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");await blocker.query('COMMIT');
+      expect((await pending).status).toBe(403);
+      expect((await admin.query('SELECT deleted_at FROM graybox.projects WHERE id=$1',[p.id])).rows[0].deleted_at).toBeNull();
+      expect((await admin.query('SELECT undone_at FROM graybox.batches WHERE id=$1',[b])).rows[0].undone_at).toBeNull();
+      expect((await admin.query('SELECT count(*)::int n FROM graybox.batches WHERE compensates=$1',[b])).rows[0].n).toBe(0);
+    } finally {await blocker.query('ROLLBACK');blocker.release();await pending;}
+  });
+  test('regression successful undo cache cannot be replayed after scope revocation',async()=> {
+    const b=batch();await project(b);const pr=await preview(b);const key=randomUUID();expect((await undo(b,pr,key)).status).toBe(200);
+    await admin.query("UPDATE graybox.credentials SET project_ids='[]' WHERE label='owner_agent'");
+    expect((await undo(b,pr,key)).status).toBe(403);
+  });
+  test('regression inaccessible experiment mutation and references cannot reveal existence',async()=> {
+    const p=await project();const e=await experiment(p.id);const auth=fixture.tokens.restricted_agent;
+    const known=await command('experiment_update',{id:e.id,name:'X'},batch(),e.revision,auth),missing=await command('experiment_update',{id:randomUUID(),name:'X'},batch(),e.revision,auth);
+    expect(known).toEqual(missing);expect(known.status).toBe(404);
+    const allowed=await project();await admin.query("UPDATE graybox.credentials SET project_ids=$1 WHERE label='restricted_agent'",[JSON.stringify([allowed.id])]);
+    for(const reference of ['series_id','based_on'] as const) {
+      const create=(id:string)=>command('experiment_create',{project_id:allowed.id,...(reference==='based_on'?{series_name:'S'}:{}),[reference]:id,name:'X',goal:'G'},batch(),undefined,auth);
+      const knownReference=await create(reference==='series_id'?e.series_id:e.id),absentReference=await create(randomUUID());expect(knownReference).toEqual(absentReference);expect(knownReference.status).toBe(404);
+    }
   });
 });

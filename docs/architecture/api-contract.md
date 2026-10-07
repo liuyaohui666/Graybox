@@ -4,6 +4,8 @@ Base URL `http://127.0.0.1:4318`. All routes except health require `Authorizatio
 
 Success is `{data: ...}`. Failure is `{error:{code,message,details?}}` with 400 validation, 401 authentication, 403 scope, 404 missing, 409 concurrency/idempotency/undo conflict. Actor fields are never accepted from clients. UUIDs, times, revisions and experiment versions are server generated. Revisions start at 1.
 
+Single-entity reads and experiment/series reference lookups return identical `NOT_FOUND`/404 for absent and inaccessible records. Scope is applied to the SQL lookup before existence/revision checks. Mutation transactions refresh the complete credential identity and project scope after acquiring the domain lock; a trusted fixed SQL lookup holds a credential row share lock through commit, while the runtime role has no credential UPDATE privilege. Cached idempotency results also check the current authority against stored server-owned project IDs before returning private snapshots; authorized closed-batch retries remain identical.
+
 ## Read routes
 
 - `GET /v1/health` → `{data:{environment_id,mode:"local"}}`.
@@ -45,6 +47,8 @@ Evidence includes id, experiment_id, project_id, batch_id, created_at and immuta
 `POST /v1/batches/:id/preview` body `{}` closes batch and returns `{data:{batch_id,batch_revision,preview_token,expires_at,changes:[{entity_type,entity_id,project_id,before,after,expected_revision}]}}`.
 
 `POST /v1/batches/:id/undo` body `{expected_batch_revision:<integer>,preview_token:<string>,idempotency_key:<uuid>}` → `{data:{batch_id,compensation_batch_id,undone:true}}`. Preview lifetime five minutes; batch undo lifetime 30 days. All entities/dependencies rechecked transactionally. Any later write or external child rejects the whole batch. Creation undo soft deletes; update undo restores allowed business fields and increments revisions. Evidence/submissions remain immutable and receive tombstones in compensation data. Original activities remain unchanged. Agents may undo only their own authorized batches.
+
+Undo checks each entity's earliest batch baseline revision against every other-batch activity. Interleaved A → B → A writes are rejected even when A owns the final current revision. The same conservative check runs during preview and execution, with rejection committing no compensation or partial restoration.
 
 ## Entrypoints
 

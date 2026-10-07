@@ -23,22 +23,39 @@ export class Service {
     return row ?? fail('UNAUTHORIZED','Valid local credential required',401);
   }
   scope(p:Principal,projectId:string) { if(p.project_ids && !p.project_ids.includes(projectId)) fail('FORBIDDEN','Project is outside credential scope',403); }
-  private async transaction<T>(p:Principal,fn:(c:PoolClient)=>Promise<T>):Promise<T> {
+  private async currentPrincipal(c:Pool|PoolClient,id:string):Promise<Principal> {
+    const row=(await c.query('SELECT * FROM graybox.authoritative_credential($1)',[id])).rows[0] as Principal|undefined;
+    return row??fail('UNAUTHORIZED','Credential revoked',401);
+  }
+  private async transaction<T>(p:Principal,fn:(c:PoolClient,current:Principal)=>Promise<T>):Promise<T> {
     const c=await this.pool.connect();
     try {
       await c.query('BEGIN'); await c.query('SELECT pg_advisory_xact_lock(77321)');
-      if(!(await c.query('SELECT id FROM graybox.credentials WHERE id=$1 AND revoked_at IS NULL',[p.id])).rowCount) fail('UNAUTHORIZED','Credential revoked',401);
-      const result=normalize(await fn(c)); await c.query('COMMIT'); return result;
+      const current=await this.currentPrincipal(c,p.id);
+      const result=normalize(await fn(c,current)); await c.query('COMMIT'); return result;
     } catch(e) {await c.query('ROLLBACK');throw e;} finally {c.release();}
   }
   private async idempotent<T>(c:PoolClient,p:Principal,key:string,body:unknown,fn:()=>Promise<T>):Promise<T> {
     const hash=digest(body),prior=(await c.query('SELECT payload_hash,response FROM graybox.idempotency WHERE credential_id=$1 AND key=$2',[p.id,key])).rows[0];
-    if(prior) {if(prior.payload_hash!==hash) fail('IDEMPOTENCY_MISMATCH','Key was already used for a different request');return prior.response as T;}
+    if(prior) {
+      // Cached data remains private even though the original command already committed.
+      // Authorization comes from the stored server response/activity, never the new payload.
+      const response=prior.response as Record<string,unknown>;
+      if(typeof response.project_id==='string') this.scope(p,response.project_id);
+      if(typeof response.workspace_id==='string' && typeof response.id==='string') this.scope(p,response.id);
+      if(typeof response.batch_id==='string') {
+        const projects=(await c.query('SELECT DISTINCT project_id FROM graybox.activities WHERE batch_id=$1',[response.batch_id])).rows;
+        for(const row of projects) this.scope(p,row.project_id);
+      }
+      if(prior.payload_hash!==hash) fail('IDEMPOTENCY_MISMATCH','Key was already used for a different request');return prior.response as T;
+    }
     const result=normalize(await fn()); await c.query('INSERT INTO graybox.idempotency(credential_id,key,payload_hash,response) VALUES($1,$2,$3,$4)',[p.id,key,hash,result]); return result;
   }
-  private async entity(c:Pool|PoolClient,type:EntityType,id:string,lock=false):Promise<Entity> {
+  private async entity(c:Pool|PoolClient,type:EntityType,id:string,lock=false,p?:Principal):Promise<Entity> {
     // Immutable children need no row write lock; all domain writers share the transaction lock.
-    const row=(await c.query(`SELECT * FROM graybox.${tables[type]} WHERE id=$1 ${lock && type!=='evidence' && type!=='submission'?'FOR UPDATE':''}`,[id])).rows[0];
+    const scoped=p?.project_ids!==undefined && p.project_ids!==null;
+    const scopeColumn=type==='project'?'id':'project_id';
+    const row=(await c.query(`SELECT * FROM graybox.${tables[type]} WHERE id=$1 ${scoped?`AND ${scopeColumn}=ANY($2::uuid[])`:''} ${lock && type!=='evidence' && type!=='submission'?'FOR UPDATE':''}`,scoped?[id,p.project_ids]:[id])).rows[0];
     if(!row || row.deleted_at) return fail('NOT_FOUND','Entity not found',404);
     if(type==='project' || type==='experiment') { const {data,...base}=row; return normalize({...base,...data}) as Entity; }
     if(type==='evidence'||type==='submission') {
@@ -47,17 +64,20 @@ export class Service {
     }
     return normalize(row) as Entity;
   }
-  async getProject(p:Principal,id:string) {this.scope(p,id);return this.entity(this.pool,'project',id);}
+  async getProject(p:Principal,id:string) {p=await this.currentPrincipal(this.pool,p.id);return this.entity(this.pool,'project',id,false,p);}
   async getExperiment(p:Principal,id:string) {
-    const e=await this.entity(this.pool,'experiment',id); this.scope(p,e.project_id!);
+    p=await this.currentPrincipal(this.pool,p.id);
+    const e=await this.entity(this.pool,'experiment',id,false,p);
     const evidence=await this.children(this.pool,'evidence',id),submissions=await this.children(this.pool,'submissions',id);return {...e,evidence,submissions};
   }
   async list(p:Principal,type:'projects'|'experiments',project_id?:string) {
+    p=await this.currentPrincipal(this.pool,p.id);
     if(project_id) this.scope(p,project_id);
     const rows=(await this.pool.query(`SELECT * FROM graybox.${type} WHERE deleted_at IS NULL ${type==='experiments'&&project_id?'AND project_id=$1':''} ORDER BY created_at,id`,type==='experiments'&&project_id?[project_id]:[])).rows;
     return rows.filter(row=>p.project_ids===null || p.project_ids.includes(type==='projects'?row.id:row.project_id)).map(row=>normalize({...Object.fromEntries(Object.entries(row).filter(([k])=>k!=='data')),...row.data}));
   }
   async activity(p:Principal,entity_id?:string,batch_id?:string) {
+    p=await this.currentPrincipal(this.pool,p.id);
     const rows=(await this.pool.query('SELECT * FROM graybox.activities WHERE ($1::uuid IS NULL OR entity_id=$1) AND ($2::uuid IS NULL OR batch_id=$2) ORDER BY created_at,id',[entity_id??null,batch_id??null])).rows;
     return rows.filter(row=>p.project_ids===null || p.project_ids.includes(row.project_id));
   }
@@ -88,7 +108,7 @@ export class Service {
   async command(p:Principal,input:unknown) {
     const parsed=commandSchema.safeParse(input); if(!parsed.success) return fail('VALIDATION','Invalid command shape or fields',400);
     const command=parsed.data;
-    return this.transaction(p,c=>this.idempotent(c,p,command.idempotency_key,input,async()=> {
+    return this.transaction(p,(c,p)=>this.idempotent(c,p,command.idempotency_key,input,async()=> {
       const {type,batch_id,session_id,payload}=command;
       await this.batch(c,p,batch_id);
       let result:Entity;
@@ -108,14 +128,14 @@ export class Service {
           seriesId=randomUUID();await c.query('INSERT INTO graybox.experiment_series(id,project_id,name) VALUES($1,$2,$3)',[seriesId,payload.project_id,payload.series_name]);
           await this.record(c,p,batch_id,type,'series',null,await this.entity(c,'series',seriesId),session_id);
         }
-        const series=await this.entity(c,'series',seriesId,true);if(series.project_id!==payload.project_id) fail('VALIDATION','Series project mismatch',400);
-        if(payload.based_on) {const source=await this.entity(c,'experiment',payload.based_on);this.scope(p,source.project_id!);if(source.project_id!==payload.project_id) fail('VALIDATION','Source project mismatch',400);}
+        const series=await this.entity(c,'series',seriesId,true,p);if(series.project_id!==payload.project_id) fail('VALIDATION','Series project mismatch',400);
+        if(payload.based_on) {const source=await this.entity(c,'experiment',payload.based_on,false,p);if(source.project_id!==payload.project_id) fail('VALIDATION','Source project mismatch',400);}
         const v=(await c.query('UPDATE graybox.experiment_series SET next_version=next_version+1 WHERE id=$1 RETURNING next_version-1 AS version',[seriesId])).rows[0].version;
         const id=randomUUID();await c.query('INSERT INTO graybox.experiments(id,project_id,series_id,version,revision,data) VALUES($1,$2,$3,$4,1,$5)',[id,payload.project_id,seriesId,v,{name:payload.name,goal:payload.goal,status:'idea',summary:'',change_summary:'',...(payload.based_on?{based_on:payload.based_on}:{})}]);
         result=await this.entity(c,'experiment',id);await this.record(c,p,batch_id,type,'experiment',null,result,session_id);
       } else {
         const id=type==='experiment_update'?payload.id:payload.experiment_id;
-        const before=await this.entity(c,'experiment',id,true);this.scope(p,before.project_id!);this.revision(before,command.expected_revision);
+        const before=await this.entity(c,'experiment',id,true,p);this.revision(before,command.expected_revision);
         let data=this.business(before,'experiment');
         if(type==='experiment_update') {
           const {id:ignored,...fields}=payload;
@@ -155,9 +175,9 @@ export class Service {
     for(const change of sorted) {
       const current=await this.entity(c,change.entity_type,change.entity_id,true);
       if(current.revision!==change.expected_revision) fail('UNDO_CONFLICT','Entity has a later revision');
-      const later=await c.query('SELECT id FROM graybox.activities WHERE entity_id=$1 AND batch_id<>$2 AND created_at >= (SELECT created_at FROM graybox.batches WHERE id=$2)',[change.entity_id,batchId]);
-      // Earlier batches can share creation timestamps; revision remains authoritative for business rows.
-      if(['evidence','submission'].includes(change.entity_type) && later.rowCount) fail('UNDO_CONFLICT','Immutable child has external activity');
+      const firstRevision=change.before?.revision??0;
+      const later=await c.query("SELECT id FROM graybox.activities WHERE entity_type=$1 AND entity_id=$2 AND batch_id<>$3 AND (after->>'revision')::integer>$4",[change.entity_type,change.entity_id,batchId,firstRevision]);
+      if(later.rowCount) fail('UNDO_CONFLICT','Another batch mutated this entity after the batch baseline');
       if(!change.before) {
         const checks: Array<[string,string,unknown[]]>=[];
         if(change.entity_type==='project') checks.push(['experiments','project_id',[change.entity_id]],['experiment_series','project_id',[change.entity_id]]);
@@ -177,7 +197,7 @@ export class Service {
     return {batch,changes:sorted};
   }
   async preview(p:Principal,batchId:string) {
-    return this.transaction(p,async c=> {
+    return this.transaction(p,async(c,p)=> {
       const {batch,changes}=await this.undoChanges(c,p,batchId);
       if(!batch.closed_at) {await c.query('UPDATE graybox.batches SET closed_at=now(),revision=revision+1 WHERE id=$1',[batchId]);batch.revision=Number(batch.revision)+1;}
       const expires=Date.now()+5*60*1000;
@@ -188,7 +208,7 @@ export class Service {
   }
   async undo(p:Principal,batchId:string,input:unknown) {
     const parsed=undoSchema.safeParse(input);if(!parsed.success) return fail('VALIDATION','Invalid undo request',400);const body=parsed.data;
-    return this.transaction(p,c=>this.idempotent(c,p,body.idempotency_key,{batch_id:batchId,...body},async()=> {
+    return this.transaction(p,(c,p)=>this.idempotent(c,p,body.idempotency_key,{batch_id:batchId,...body},async()=> {
       if(!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(body.preview_token)) fail('PREVIEW_INVALID','Invalid signed preview encoding');
       const [payload,signature]=body.preview_token.split('.');
       const expected=createHmac('sha256',this.previewSecret).update(payload??'').digest('base64url');

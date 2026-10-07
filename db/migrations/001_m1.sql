@@ -20,3 +20,12 @@ GRANT USAGE ON SCHEMA graybox TO graybox_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA graybox TO graybox_runtime;
 GRANT INSERT,UPDATE ON graybox.projects,graybox.experiments,graybox.experiment_series,graybox.batches TO graybox_runtime;
 GRANT INSERT ON graybox.activities,graybox.evidence,graybox.submissions,graybox.tombstones,graybox.idempotency TO graybox_runtime;
+-- Row locking requires UPDATE privilege. Keep that authority out of the runtime role
+-- and expose only a fixed, read-only credential lookup holding a share lock to commit.
+CREATE OR REPLACE FUNCTION graybox.authoritative_credential(credential_id uuid)
+RETURNS TABLE(id uuid,human_id uuid,agent_id uuid,kind text,project_ids jsonb)
+LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog
+AS $$ SELECT c.id,c.human_id,c.agent_id,c.kind,c.project_ids
+      FROM graybox.credentials c WHERE c.id=credential_id AND c.revoked_at IS NULL FOR SHARE $$;
+REVOKE ALL ON FUNCTION graybox.authoritative_credential(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION graybox.authoritative_credential(uuid) TO graybox_runtime;
