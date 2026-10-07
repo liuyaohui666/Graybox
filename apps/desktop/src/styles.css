@@ -1035,3 +1035,41 @@ textarea::placeholder {
 
 .session { padding: 32px; max-width: 900px; margin: auto; } .session form { display: grid; gap: 12px; max-width: 480px; } .session label { display: grid; gap: 6px; } .cloud-controls { display: flex; gap: 12px; align-items: center; padding: 8px 24px; } .management { border-bottom: 1px solid #ddd; }
 
+/* Session controls sit outside .shell, so they must also clear its fixed sidebar. */
+.cloud-controls,
+#root > section.session {
+  margin-left: 220px;
+}
+.cloud-controls {
+  flex-wrap: wrap;
+  min-height: 48px;
+  border-bottom: 1px solid var(--line);
+}
+.cloud-controls button,
+.management button {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.management {
+  overflow-wrap: anywhere;
+}
+.management h2,
+.management p {
+  margin-bottom: 12px;
+}
+.management h2:not(:first-child) {
+  margin-top: 24px;
+}
+@media (max-width: 1100px) {
+  .cloud-controls,
+  #root > section.session { margin-left: 190px; }
+}
+@media (max-width: 700px) {
+  .cloud-controls,
+  #root > section.session { margin-left: 65px; }
+  .cloud-controls { padding: 10px 14px; }
+  #root > section.session { padding: 20px 14px; }
+}
+
