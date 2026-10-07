@@ -1,0 +1,33 @@
+[Unit]
+Description=Graybox private team API
+After=network.target postgresql@16-main.service
+
+[Service]
+Type=simple
+User=graybox
+Group=graybox
+WorkingDirectory=/opt/graybox/current
+EnvironmentFile=/etc/graybox/runtime.env
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/opt/graybox/node/bin/node /opt/graybox/current/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+MemoryHigh=512M
+MemoryMax=640M
+CPUQuota=50%
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
