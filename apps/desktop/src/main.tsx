@@ -12,6 +12,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
+import { SessionGate } from "./cloud-ui.tsx";
 
 type Page = "home" | "projects" | "experiments" | "activity";
 type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
@@ -334,11 +335,11 @@ function App() {
             {activeProfile?.name.slice(0, 1) ?? "灰"}
           </span>
           <label>
-            本地测试身份
+            当前身份
             <select
-              aria-label="切换本地测试身份"
+              aria-label="切换当前身份"
               value={profile}
-              disabled={busy}
+              disabled={busy || people.length < 2}
               onChange={(e) => setProfile(e.target.value)}
             >
               {people.map((p) => (
@@ -1059,6 +1060,8 @@ function App() {
 }
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <SessionGate><App /></SessionGate>
   </React.StrictMode>,
 );
+
+

@@ -99,7 +99,8 @@ function localBridge(): Plugin {
 }
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
-  plugins: [react(), localBridge()],
+  plugins: [react(), ...((process.env.VITE_GRAYBOX_MODE ?? process.env.GRAYBOX_WEB_MODE) === "cloud" ? [] : [localBridge()])],
+  define: { "import.meta.env.VITE_GRAYBOX_MODE": JSON.stringify((process.env.VITE_GRAYBOX_MODE ?? process.env.GRAYBOX_WEB_MODE) === "local" || (!(process.env.VITE_GRAYBOX_MODE ?? process.env.GRAYBOX_WEB_MODE) && process.argv.includes("build") === false) ? "local" : "cloud") },
   server: {
     host: "127.0.0.1",
     port: 4317,
@@ -108,3 +109,5 @@ export default defineConfig({
   },
   build: { outDir: "dist", emptyOutDir: true },
 });
+
+

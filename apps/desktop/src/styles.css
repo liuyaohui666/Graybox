@@ -1032,3 +1032,6 @@ textarea::placeholder {
     display: none;
   }
 }
+
+.session { padding: 32px; max-width: 900px; margin: auto; } .session form { display: grid; gap: 12px; max-width: 480px; } .session label { display: grid; gap: 6px; } .cloud-controls { display: flex; gap: 12px; align-items: center; padding: 8px 24px; } .management { border-bottom: 1px solid #ddd; }
+
