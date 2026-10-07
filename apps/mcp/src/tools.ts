@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { commandSchema,evidenceDetails,undoSchema } from '../../../packages/contracts/src/index.ts';
-import { resolveContext,executeCommand } from '../../../packages/local-context/src/binding.ts';
+import { resolveContext,executeCommand,undoExecutionContext } from '../../../packages/local-context/src/binding.ts';
 import { ClientError,safeError } from '../../../packages/client/src/client.ts';
 const cwd=z.string().min(1).describe('Explicit absolute directory of the user project. Never inferred from MCP process cwd.');
 const commands=commandSchema.options;
@@ -23,10 +23,14 @@ export async function entityGet(cwd:string,entity_type:'project'|'experiment',id
 }
 export async function activityList(cwd:string,filters:{entity_id?:string;batch_id?:string}){const ctx=await resolveContext({cwd});return (await ctx.api.activity(filters)).filter(item=>item.project_id===ctx.project.id);}
 export async function batchUndo(cwd:string,body:{action:'preview'|'execute';batch_id:string;expected_batch_revision?:number;preview_token?:string;idempotency_key?:string}){
+  if(body.action==='execute'){
+    const parsed=undoSchema.safeParse({expected_batch_revision:body.expected_batch_revision,preview_token:body.preview_token,idempotency_key:body.idempotency_key});if(!parsed.success)throw new ClientError('VALIDATION','Undo execution requires the preview token, matching revision and original stable UUID key');
+    const ctx=await undoExecutionContext({cwd},body.batch_id);return ctx.api.undo(body.batch_id,parsed.data);
+  }
   const ctx=await resolveContext({cwd}),activity=await ctx.api.activity({batch_id:body.batch_id});if(!activity.length)throw new ClientError('NOT_FOUND','Batch is missing or inaccessible',404);
   if(activity.some(item=>item.project_id!==ctx.project.id))throw new ClientError('PROJECT_MISMATCH','Batch contains changes outside the explicit project binding');
   if(body.action==='preview'){if(body.preview_token||body.expected_batch_revision||body.idempotency_key)throw new ClientError('VALIDATION','Preview accepts only action and batch UUID');return ctx.api.preview(body.batch_id);}
-  return ctx.api.undo(body.batch_id,{expected_batch_revision:body.expected_batch_revision,preview_token:body.preview_token,idempotency_key:body.idempotency_key});
+  throw new ClientError('VALIDATION','Unknown undo action');
 }
 const descriptions:Record<keyof typeof schemas,string>={
   context_resolve:'Resolve explicit cwd against the nearest unambiguous project binding, trusted personal environment and distinct agent identity; optionally report bounded read-only Git metadata.',

@@ -61,6 +61,23 @@ async function resolveContextInternal(options:ContextOptions,ignoreActive=false)
   return {...trusted,binding:discovery.binding,project,active_experiment:active,paths,safe};
 }
 export async function resolveContext(options:ContextOptions){return resolveContextInternal(options);}
+export async function undoExecutionContext(options:ContextOptions,batchId:string){
+  // An exact undo replay must survive deletion of the bound project or active
+  // experiment. This narrow path uses immutable, authenticated batch activity;
+  // normal context reads/writes continue requiring live project/experiment state.
+  const cwd=await cwdPath(options.cwd),discovery=await discover(cwd),binding=discovery.binding,trusted=await environmentClient(binding.environment_id,options.configPath);
+  if(trusted.workspace_id!==binding.workspace_id)fail('WORKSPACE_MISMATCH','Binding workspace differs from selected local credentials');
+  let project:null|Awaited<ReturnType<ApiClient['project']>>=null;
+  try{project=await trusted.api.project(binding.project_id);}catch(error){if(!(error instanceof ClientError)||error.code!=='NOT_FOUND')throw error;}
+  if(project&&project.workspace_id!==binding.workspace_id)fail('WORKSPACE_MISMATCH','Bound project differs from the selected workspace');
+  const activity=await trusted.api.activity({batch_id:batchId});if(!activity.length)throw new ClientError('NOT_FOUND','Batch is missing or inaccessible',404);
+  if(activity.some(item=>item.project_id!==binding.project_id))fail('PROJECT_MISMATCH','Batch contains changes outside the explicit project binding');
+  if(!project){
+    const projectProof=activity.some(item=>{const after=item.after as Record<string,unknown>|null;return item.entity_type==='project'&&item.entity_id===binding.project_id&&after?.id===binding.project_id&&after.workspace_id===binding.workspace_id;});
+    if(!projectProof)throw new ClientError('NOT_FOUND','Live project or immutable workspace proof is required for undo execution',404);
+  }
+  return {...trusted,binding};
+}
 async function atomicJson(path:string,value:unknown,replace:boolean){
   await mkdir(dirname(path),{recursive:true});if(!replace){try{await writeFile(path,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});return;}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')fail('CONFIG_EXISTS','Existing local configuration requires explicit replace');throw error;}}
   const temp=path+'.'+randomUUID()+'.tmp';try{await writeFile(temp,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});await rename(temp,path);}finally{await rm(temp,{force:true});}

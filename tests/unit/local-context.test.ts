@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { ApiClient, ClientError, safeError } from '../../packages/client/src/client.ts';
 import { resolveContext, bindProject, initializeConfig, defaultConfigPath,activateExperiment,createProject } from '../../packages/local-context/src/binding.ts';
+import { gitMetadata } from '../../packages/local-context/src/git.ts';
 
 const dirs:string[]=[];const servers:Array<ReturnType<typeof createServer>>=[];
 afterEach(async()=>{for(const server of servers.splice(0))await new Promise<void>(r=>server.close(()=>r()));for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
@@ -46,6 +47,11 @@ describe('local context authority and discovery',()=>{
   test('human credential identity is rejected even if trusted file claims agent token',async()=>{const f=await setup(),api=new ApiClient({endpoint:f.endpoint,token:'human-secret'});f.state.agent_id=null!;await expect(api.me()).rejects.toMatchObject({code:'AGENT_REQUIRED'});});
   test('auth init will not overwrite an environment without explicit replace',async()=>{const f=await setup();await expect(initializeConfig({configPath:f.configPath,credentials_file:f.credentials_file,endpoint:f.endpoint,agent_id:f.agent_id})).rejects.toMatchObject({code:'CONFIG_EXISTS'});});
   test('binding refuses a repository junction redirecting writes outside explicit cwd',async()=>{const f=await setup(),outside=join(f.dir,'outside');await mkdir(outside);await rm(join(f.repo,'.graybox'),{recursive:true,force:true});await symlink(outside,join(f.repo,'.graybox'),'junction');await expect(bindProject({cwd:f.repo,configPath:f.configPath,binding:f.binding})).rejects.toMatchObject({code:'CONTEXT_PATH_INVALID'});expect(await readFile(f.configPath,'utf8')).toContain('credentials_file');});
+  test('optional Git metadata never invokes repository fsmonitor hooks or clean filters',async()=>{
+    const f=await setup(),git=(args:string[])=>execFileSync('git',args,{cwd:f.repo,stdio:'pipe',windowsHide:true});await writeFile(join(f.repo,'tracked.txt'),'tracked\n');await writeFile(join(f.repo,'.gitattributes'),'*.txt filter=probe\n');git(['add','tracked.txt','.gitattributes']);
+    await writeFile(join(f.repo,'.git/hooks/fsmonitor-probe'),'#!/bin/sh\nprintf observed > fsmonitor-was-run\nprintf "token\\000"\n');git(['config','core.fsmonitor','.git/hooks/fsmonitor-probe']);git(['config','filter.probe.clean','printf observed > filter-was-run; cat']);await writeFile(join(f.repo,'tracked.txt'),'changed\n');
+    const metadata=await gitMetadata(f.repo);expect(metadata?.root).toBe(f.repo);await expect(readFile(join(f.repo,'fsmonitor-was-run'),'utf8')).rejects.toMatchObject({code:'ENOENT'});await expect(readFile(join(f.repo,'filter-was-run'),'utf8')).rejects.toMatchObject({code:'ENOENT'});
+  });
 });
 describe('local HTTP client boundaries',()=>{
   test.each(['https://example.com','http://localhost:4318','http://127.0.0.1.evil:4318','http://user:agent-secret@127.0.0.1:4318','broken agent-secret'])('rejects unsafe endpoint without leaking secret: %s',endpoint=>{try{new ApiClient({endpoint,token:'agent-secret'});expect.fail('Must reject');}catch(e){expect(e).toBeInstanceOf(ClientError);expect(JSON.stringify(safeError(e))).not.toContain('agent-secret');}});
