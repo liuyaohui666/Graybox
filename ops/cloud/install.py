@@ -81,7 +81,9 @@ for directory,dirs,files in os.walk(ROOT/'releases'):
     for name in files: os.chmod(pathlib.Path(directory)/name,0o644)
 (ROOT/'current').symlink_to(release_path,target_is_directory=True)
 # Offline bootstrap writes one invitation, never an owner password.
-bootstrap=run([str(ROOT/'node/bin/node'),'--env-file='+str(ETC/'migration.env'),str(ROOT/'current/bootstrap.mjs')])
+# Node resolves import.meta.url through symlinks; use the real entry path so its
+# direct-execution guard matches process.argv[1] and actually runs bootstrap.
+bootstrap=run([str(ROOT/'node/bin/node'),'--env-file='+str(ETC/'migration.env'),str(release_path/'bootstrap.mjs')])
 json.loads(bootstrap)
 private_write(ETC/'owner-invitation.json',bootstrap+'\n')
 shutil.copyfile(RELEASE/'ops/graybox.service','/etc/systemd/system/graybox.service')
