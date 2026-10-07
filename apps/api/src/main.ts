@@ -1,0 +1,11 @@
+import { config } from 'dotenv';
+import { Pool } from 'pg';
+import { buildApp } from './app.ts';
+config({quiet:true});
+if(process.env.GRAYBOX_MODE!=='local') throw new Error('API start disabled outside local mode until real authentication is implemented');
+if(!process.env.GRAYBOX_DATABASE_URL) throw new Error('Local database URL required');
+const pool=new Pool({connectionString:process.env.GRAYBOX_DATABASE_URL});
+const app=await buildApp({pool,mode:'local'});
+await app.listen({host:'127.0.0.1',port:4318});
+console.log('Graybox LOCAL demonstration API listening at http://127.0.0.1:4318');
+for(const signal of ['SIGINT','SIGTERM'] as const) process.on(signal,()=>void app.close().then(()=>pool.end()));
