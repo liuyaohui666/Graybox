@@ -7,6 +7,7 @@ export function SessionGate({children}: {children: React.ReactNode}) {
   const [redeem, setRedeem] = useState(false);
   const [manage, setManage] = useState(false);
   useEffect(() => { void connection().then(setState).catch(e => { setError(e.message); setState({mode:"cloud",endpoint:""}); }); }, []);
+  useEffect(() => { const ended = () => { setState(s => s ? {...s,profile:undefined} : s); setManage(false); setError("会话已过期或已撤销，请重新登录。"); }; window.addEventListener("graybox-session-ended", ended); return () => window.removeEventListener("graybox-session-ended", ended); }, []);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); setBusy(true); setError("");
     const f = new FormData(e.currentTarget);
@@ -35,4 +36,5 @@ function Management({owner}: {owner:boolean}) {
   async function action(path:string, body:unknown={}) {setBusy(true);setMessage("");try { const result=await request<{code?:string;expires_at?:string}>("",path,"POST",body); if(result.code) setMessage(`邀请码：${result.code}（有效至 ${result.expires_at}，请安全转交）`); else setMessage("操作已完成。"); await refresh();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
   return <section className="session management"><h2>团队成员</h2>{members.map(m=><p key={m.id}>{m.name} · {m.role} {m.disabled_at ? "已停用" : owner && m.role!=="owner" && <button disabled={busy} onClick={()=>void action(`/v1/members/${m.id}/disable`)}>停用成员</button>}</p>)}{owner && <button disabled={busy} onClick={()=>void action("/v1/members/invite")}>生成成员邀请码</button>}<h2>Agent 配对</h2><p>输入 CLI 显示的配对码，授权该 Agent 访问你的项目。当前授权全部项目；配对成功后需在 CLI 完成领取，领取丢失请重新配对。</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action("/v1/agents/pair/approve",{user_code:String(f.get("user_code")).trim(),project_ids:null});}}><input name="user_code" aria-label="Agent 配对码" required autoComplete="off"/><button disabled={busy}>批准配对</button></form>{agents.map(a=><p key={a.id}>{a.name} · {a.revoked_at ? "已撤销" : `有效至 ${a.expires_at}`} {!a.revoked_at && <button disabled={busy} onClick={()=>void action(`/v1/agents/${a.id}/revoke`)}>撤销 Agent</button>}</p>)}{message && <p role="status">{message}</p>}</section>;
 }
+
 

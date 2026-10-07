@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 export interface Profile { id: string; name: string; role: string }
 export interface Connection { mode: "local" | "cloud"; endpoint: string; profile?: Profile }
 let bearer: string | undefined;
+let sessionRevision = 0;
 let current: Connection | undefined;
 export class ApiError extends Error {
   constructor(public code: string, message: string) { super(`${code} · ${message}`); }
@@ -12,23 +13,23 @@ export async function connection(): Promise<Connection> {
 }
 export async function configure(endpoint: string): Promise<void> {
   if (!isTauri()) throw new Error("浏览器使用当前站点的云端服务。");
-  current = await invoke("configure_endpoint", { endpoint });
+  current = await invoke("configure_endpoint", { endpoint }); sessionRevision++;
 }
 export async function authenticate(kind: "login" | "redeem", body: unknown): Promise<Profile> {
   if (isTauri()) {
     const result = await invoke<{profile: Profile}>("authenticate", { kind, body });
     current = { ...(await connection()), profile: result.profile };
-    return result.profile;
+    sessionRevision++; return result.profile;
   }
   const result = await request<{token: string; profile: Profile}>("", `/v1/auth/${kind}`, "POST", body);
   bearer = result.token;
   current = { ...(await connection()), profile: result.profile };
-  return result.profile;
+  sessionRevision++; return result.profile;
 }
 export async function logout(): Promise<void> {
-  await request("", "/v1/auth/logout", "POST", {});
-  bearer = undefined;
-  if (current) current.profile = undefined;
+  const revision = sessionRevision;
+  try { await request("", "/v1/auth/logout", "POST", {}); } catch(e) { if (!(e instanceof ApiError && e.code === "UNAUTHORIZED")) throw e; }
+  if (revision === sessionRevision) { bearer = undefined; if (current) current.profile = undefined; sessionRevision++; }
 }
 export async function profiles(): Promise<Profile[]> {
   const c = await connection();
@@ -40,6 +41,8 @@ export async function profiles(): Promise<Profile[]> {
 }
 export async function request<T>(profileId: string, path: string, method = "GET", body?: unknown): Promise<T> {
   const c = current ?? await connection();
+  const requestBearer = bearer;
+  const revision = sessionRevision;
   let result: { data?: T; error?: {code: string; message: string} };
   if (isTauri()) result = await invoke("api_request", { profileId, path, method, body: body ?? null });
   else {
@@ -54,7 +57,15 @@ export async function request<T>(profileId: string, path: string, method = "GET"
     if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("服务端未返回 API 数据，请检查服务地址。");
     result = await response.json();
   }
-  if (result.error) throw new ApiError(result.error.code, result.error.message);
+  if (result.error) {
+    if (result.error.code === "UNAUTHORIZED" && c.mode === "cloud" && requestBearer === bearer && revision === sessionRevision) {
+      bearer = undefined; if (current) current.profile = undefined;
+      window.dispatchEvent?.(new Event("graybox-session-ended"));
+    }
+    throw new ApiError(result.error.code, result.error.message);
+  }
   return result.data as T;
 }
+
+
 
