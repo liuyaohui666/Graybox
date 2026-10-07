@@ -1,14 +1,15 @@
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildApp } from './app.ts';
+import { buildApp,parseServerPort } from './app.ts';
 config({quiet:true});
 const mode=process.env.GRAYBOX_MODE;
 if(mode!=='local'&&mode!=='cloud')throw new Error('GRAYBOX_MODE must be local or cloud');
 if(!process.env.GRAYBOX_DATABASE_URL) throw new Error('Database URL required');
 if(mode==='cloud'&&!process.env.GRAYBOX_AUTH_DATABASE_URL)throw new Error('Separate auth database role URL required');
+const port=parseServerPort(process.env.GRAYBOX_PORT);
 const pool=new Pool({connectionString:process.env.GRAYBOX_DATABASE_URL,max:mode==='cloud'?3:4});
 const authPool=mode==='cloud'?new Pool({connectionString:process.env.GRAYBOX_AUTH_DATABASE_URL,max:1}):undefined;
 const app=await buildApp({pool,authPool,mode});
-await app.listen({host:'127.0.0.1',port:4318});
-console.log(`Graybox ${mode} API listening on loopback port 4318`);
+await app.listen({host:'127.0.0.1',port});
+console.log(`Graybox ${mode} API listening on loopback port ${port}`);
 for(const signal of ['SIGINT','SIGTERM'] as const) process.on(signal,()=>void app.close().then(async()=>{await pool.end();await authPool?.end();}));

@@ -11,12 +11,23 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
   const auth=options.mode==='cloud'?new CloudAuth(options.authPool!):null;
   const publicRoutes=new Set(['/v1/health',...(auth?['/v1/auth/login','/v1/auth/redeem','/v1/auth/pair/start','/v1/auth/pair/poll']:[])]);
   const limits=new Map<string,{count:number;until:number}>();
-  const app=Fastify({logger:false,bodyLimit:256*1024}); const service=new Service(options.pool,options.mode as 'local'|'cloud');
+  const app=Fastify({logger:false,bodyLimit:256*1024,trustProxy:options.mode==='cloud'?(address,hop)=>hop===0&&(address==='127.0.0.1'||address==='::ffff:127.0.0.1'):false}); const service=new Service(options.pool,options.mode as 'local'|'cloud');
   await app.register(cors,{origin:['http://127.0.0.1:1420','http://localhost:1420','http://127.0.0.1:5173','http://localhost:5173','http://tauri.localhost','tauri://localhost'],methods:['GET','POST'],allowedHeaders:['authorization','content-type']});
   app.decorateRequest('principal',null);
   app.addHook('preHandler',async request=> {
     const path=request.url.split('?')[0];
-    if(auth&&path.startsWith('/v1/auth/')){const key=request.ip;let limit=limits.get(key);if(!limit||limit.until<Date.now()){limit={count:0,until:Date.now()+60000};limits.set(key,limit);}if(++limit.count>30) throw new DomainError('RATE_LIMITED','Try again later',429);if(limits.size>10000) for(const [k,v] of limits)if(v.until<Date.now())limits.delete(k);if(limits.size>10000)throw new DomainError('RATE_LIMITED','Try again later',429);}
+    if(auth&&request.method!=='OPTIONS'&&path.startsWith('/v1/auth/')) {
+      const key=request.ip,now=Date.now();
+      let limit=limits.get(key);
+      if(!limit||limit.until<now) {
+        if(!limit&&limits.size>=10000) {
+          for(const [k,v] of limits)if(v.until<now)limits.delete(k);
+          if(limits.size>=10000)throw new DomainError('RATE_LIMITED','Try again later',429);
+        }
+        limit={count:0,until:now+60000};limits.set(key,limit);
+      }
+      if(++limit.count>30)throw new DomainError('RATE_LIMITED','Try again later',429);
+    }
     if(publicRoutes.has(path) || request.method==='OPTIONS') return;
     const authorization=request.headers.authorization??'';
     if(!authorization.startsWith('Bearer ')) throw new DomainError('UNAUTHORIZED','Bearer credential required',401);
@@ -52,4 +63,10 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
     app.post<{Params:{id:string}}>('/v1/agents/:id/revoke',async r=>({data:await auth.action(principal(r),'revoke',r.body,id(r.params.id))}));
   }
   return app;
+}
+
+export function parseServerPort(value?:string):number {
+  if(value===undefined)return 4318;
+  if(!/^[0-9]+$/.test(value)||Number(value)<1||Number(value)>65535)throw new Error('Invalid server port');
+  return Number(value);
 }
