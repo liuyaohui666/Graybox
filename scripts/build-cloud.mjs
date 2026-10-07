@@ -21,6 +21,9 @@ for(const sql of ['001_m1.sql','002_cloud_auth.sql'])await copyFile(resolve(root
 const web=resolve(out,'web');
 await rm(web,{recursive:true,force:true});
 await cp(resolve(root,'apps/desktop/dist'),web,{recursive:true});
-await cp(resolve(root,'ops/cloud'),resolve(out,'ops'),{recursive:true,filter:source=>!source.includes('__pycache__')&&!source.endsWith('.pyc')});
+const ops=resolve(out,'ops');
+if(ops!==resolve(root,'.local/cloud-release/ops'))throw new Error('Unexpected generated operations path');
+await rm(ops,{recursive:true,force:true});
+await cp(resolve(root,'ops/cloud'),ops,{recursive:true,filter:source=>!source.includes('__pycache__')&&!source.endsWith('.pyc')});
 await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',mode:'cloud',built_at:new Date().toISOString(),node:'24.18.0'},null,2)+'\n');
 console.log(out);
