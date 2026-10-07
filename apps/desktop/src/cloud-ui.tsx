@@ -1,6 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useSyncExternalStore, createContext } from "react";
 import { connection, configure, authenticate, logout, request, type Connection } from "./platform.ts";
+import { writeSafety } from "./write-safety.ts";
+import { commandRetry } from "./retry.ts";
+export const ConnectionModeContext = createContext<"local" | "cloud">("cloud");
 export function SessionGate({children}: {children: React.ReactNode}) {
+  const pendingWrite = useSyncExternalStore(writeSafety.subscribe, writeSafety.snapshot);
   const [state, setState] = useState<Connection>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,15 +21,15 @@ export function SessionGate({children}: {children: React.ReactNode}) {
       setState({...await connection(), profile});
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
-  if (!state || (state.mode === "cloud" && !state.profile)) return <main className="session"><h1>登录 Graybox</h1><p>使用团队账号。邀请或初始化码只能使用一次。</p><form onSubmit={submit}>
+  if (!state || (state.mode === "cloud" && !state.profile)) return <main className="session"><h1>登录 Graybox</h1>{pendingWrite && <p role="alert">上次 {pendingWrite.operation} 结果未确认。重新登录会产生新凭据，不能沿用原凭据的重试保证。登录后先核对最新记录，避免重复写入。</p>}<p>使用团队账号。邀请或初始化码只能使用一次。</p><form onSubmit={submit}>
     {state?.endpoint !== window.location.origin && <label>云端 HTTPS 地址<input name="endpoint" type="url" defaultValue={state?.endpoint} required placeholder="https://graybox.example.com" /></label>}
     {redeem && <><label>邀请 / 初始化码<input name="code" required autoComplete="off" /></label><label>显示名称<input name="name" required maxLength={100} /></label></>}
     <label>用户名<input name="username" required pattern="[A-Za-z0-9._-]{3,40}" autoComplete="username" /></label>
     <label>密码<input name="password" type="password" required minLength={redeem ? 15 : undefined} maxLength={128} autoComplete={redeem ? "new-password" : "current-password"} /></label>
     <button disabled={busy || !state}>{busy ? "连接中…" : redeem ? "激活账号" : "登录"}</button><button type="button" onClick={() => setRedeem(!redeem)}>{redeem ? "已有账号" : "使用邀请 / 初始化码"}</button>
   </form>{error && <p role="alert">{error}</p>}</main>;
-  if (state.mode === "local") return children;
-  return <><div className="cloud-controls"><span>{state.profile?.name} · 云端</span><button onClick={() => setManage(!manage)}>团队与 Agent</button><button disabled={busy} onClick={async () => { setBusy(true); try { await logout(); setState({...state, profile: undefined}); setManage(false); } catch(e) { setError((e as Error).message); } finally {setBusy(false);} }}>退出登录</button>{error && <span role="alert">{error}</span>}</div>{manage && <Management owner={state.profile?.role === "owner"} />}{children}</>;
+  if (state.mode === "local") return <ConnectionModeContext.Provider value="local">{children}</ConnectionModeContext.Provider>;
+  return <ConnectionModeContext.Provider value="cloud"><div className="cloud-controls"><span>{state.profile?.name} · 云端</span><button onClick={() => setManage(!manage)}>团队与 Agent</button><button disabled={busy || !!pendingWrite} onClick={async () => { setBusy(true); try { await logout(); setState({...state, profile: undefined}); setManage(false); } catch(e) { setError((e as Error).message); } finally {setBusy(false);} }}>退出登录</button>{error && <span role="alert">{error}</span>}</div>{pendingWrite && <section className="session"><p role="alert">{pendingWrite.busy ? "写入正在进行，暂不能退出登录。" : `上次 ${pendingWrite.operation} 结果未确认，请在当前会话使用原操作重试。重新登录后请先核对最新记录，避免重复写入。`}</p>{!pendingWrite.busy && <button onClick={() => { if (window.confirm("请确认已核对最新记录。解除标记后再次提交将视为新操作，可能产生重复记录。")) { writeSafety.acknowledge(); commandRetry.clear(); } }}>已核对记录，解除未确认标记</button>}</section>}{manage && <Management owner={state.profile?.role === "owner"} />}{children}</ConnectionModeContext.Provider>;
 }
 interface Member {id:string; name:string; role:string; disabled_at: string|null}
 interface Agent {id:string; name:string; revoked_at:string|null; expires_at:string}
@@ -36,5 +40,8 @@ function Management({owner}: {owner:boolean}) {
   async function action(path:string, body:unknown={}) {setBusy(true);setMessage("");try { const result=await request<{code?:string;expires_at?:string}>("",path,"POST",body); if(result.code) setMessage(`邀请码：${result.code}（有效至 ${result.expires_at}，请安全转交）`); else setMessage("操作已完成。"); await refresh();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
   return <section className="session management"><h2>团队成员</h2>{members.map(m=><p key={m.id}>{m.name} · {m.role} {m.disabled_at ? "已停用" : owner && m.role!=="owner" && <button disabled={busy} onClick={()=>void action(`/v1/members/${m.id}/disable`)}>停用成员</button>}</p>)}{owner && <button disabled={busy} onClick={()=>void action("/v1/members/invite")}>生成成员邀请码</button>}<h2>Agent 配对</h2><p>输入 CLI 显示的配对码，授权该 Agent 访问你的项目。当前授权全部项目；配对成功后需在 CLI 完成领取，领取丢失请重新配对。</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action("/v1/agents/pair/approve",{user_code:String(f.get("user_code")).trim(),project_ids:null});}}><input name="user_code" aria-label="Agent 配对码" required autoComplete="off"/><button disabled={busy}>批准配对</button></form>{agents.map(a=><p key={a.id}>{a.name} · {a.revoked_at ? "已撤销" : `有效至 ${a.expires_at}`} {!a.revoked_at && <button disabled={busy} onClick={()=>void action(`/v1/agents/${a.id}/revoke`)}>撤销 Agent</button>}</p>)}{message && <p role="status">{message}</p>}</section>;
 }
+
+
+
 
 

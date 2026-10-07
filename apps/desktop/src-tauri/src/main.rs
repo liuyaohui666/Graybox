@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value,json};
 use std::{fs, time::Duration, sync::{Mutex,OnceLock}};
 #[derive(Default)]
-struct Session { endpoint: Option<String>, token: Option<String>, profile: Option<Value>, generation: u64 }
+struct Session { endpoint: Option<String>, token: Option<String>, profile: Option<Value>, token_origin: Option<String>, generation: u64 }
 fn session() -> &'static Mutex<Session> { static STATE: OnceLock<Mutex<Session>>=OnceLock::new(); STATE.get_or_init(||Mutex::new(Session::default())) }
 fn allowed_request(path:&str, method:&str)->bool {
  if !matches!(method,"GET"|"POST") || !path.starts_with("/v1/") || !path.chars().all(|c|c.is_ascii_alphanumeric()||"/_-?=&".contains(c)) {return false;}
@@ -28,17 +28,26 @@ fn credentials()->Result<CredentialFile,String> {
  let file:CredentialFile=serde_json::from_str(&raw).map_err(|_|"本地开发凭据格式不正确。")?;
  if file.mode!="local-demonstration-only" {return Err("凭据并非本地演示模式。".into());} Ok(file)
 }
-fn cloud_endpoint()->Result<Option<String>,String> {
- if let Some(endpoint)=session().lock().unwrap().endpoint.clone() {return Ok(Some(endpoint));}
- if let Ok(raw)=std::env::var("GRAYBOX_SERVER_URL").or_else(|_|std::env::var("GRAYBOX_ENDPOINT")) {return trusted_origin(&raw).map(Some);}
- Ok(None)
+#[derive(Clone)]
+struct SessionSnapshot { endpoint: Option<String>, token: Option<String>, profile: Option<Value>, generation: u64 }
+fn snapshot_locked(state:&Session, trusted:Option<String>)->Result<SessionSnapshot,String> {
+ let endpoint=state.endpoint.clone().or(trusted);
+ if state.token.is_some() && state.token_origin!=endpoint {return Err("凭据与服务地址不匹配，请重新登录。".into());}
+ Ok(SessionSnapshot{endpoint,token:state.token.clone(),profile:state.profile.clone(),generation:state.generation})
 }
+fn session_snapshot()->Result<SessionSnapshot,String> {
+ let state=session().lock().unwrap();
+ let trusted=if state.endpoint.is_none() {std::env::var("GRAYBOX_SERVER_URL").or_else(|_|std::env::var("GRAYBOX_ENDPOINT")).ok().map(|raw|trusted_origin(&raw)).transpose()?}else{None};
+ snapshot_locked(&state,trusted)
+}
+fn cloud_endpoint()->Result<Option<String>,String> {Ok(session_snapshot()?.endpoint)}
 #[tauri::command] fn connection_info()->Result<Value,String> {
- let endpoint=cloud_endpoint()?;
+ let snapshot=session_snapshot()?;
+ let endpoint=snapshot.endpoint;
  if endpoint.is_none() && std::env::var("GRAYBOX_CREDENTIALS_PATH").is_ok() { credentials()?; return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318"})); }
- Ok(json!({"mode":"cloud","endpoint":endpoint.unwrap_or_default(),"profile":session().lock().unwrap().profile.clone()}))
+ Ok(json!({"mode":"cloud","endpoint":endpoint.unwrap_or_default(),"profile":snapshot.profile}))
 }
-#[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.profile=None;s.generation+=1;} connection_info()}
+#[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;} connection_info()}
 #[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
 async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:Option<String>)->Result<Value,String> {
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(30)).build().map_err(|_|"无法创建连接。")?;
@@ -51,25 +60,30 @@ async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:
 }
 #[tauri::command] async fn authenticate(kind:String,body:Value)->Result<Value,String> {
  if !matches!(kind.as_str(),"login"|"redeem"){return Err("认证操作不被允许。".into());}
- let endpoint=cloud_endpoint()?.ok_or("请先指定云端 HTTPS 服务地址。")?;
- let generation=session().lock().unwrap().generation;
+ let snapshot=session_snapshot()?;
+ let endpoint=snapshot.endpoint.ok_or("请先指定云端 HTTPS 服务地址。")?;
+ let generation=snapshot.generation;
  let result=fetch_api(&endpoint,&format!("/v1/auth/{}",kind),"POST",Some(body),None).await?;
  if let Some(error)=result.get("error") {return Err(error.get("message").and_then(Value::as_str).unwrap_or("登录失败。").into());}
  let data=&result["data"]; let token=data["token"].as_str().ok_or("认证响应缺少凭据。")?.to_owned();
  let profile=data["profile"].clone(); if !profile.is_object(){return Err("认证响应缺少身份。".into());}
- {let mut s=session().lock().unwrap(); if s.generation!=generation || s.endpoint.as_ref().is_some_and(|value|value!=&endpoint) {return Err("服务地址已变更，请重新登录。".into());} s.token=Some(token);s.profile=Some(profile.clone());s.generation+=1;}
+ {let mut s=session().lock().unwrap(); if s.generation!=generation || s.endpoint.as_ref().is_some_and(|value|value!=&endpoint) {return Err("服务地址已变更，请重新登录。".into());} s.endpoint=Some(endpoint.clone());s.token_origin=Some(endpoint);s.token=Some(token);s.profile=Some(profile.clone());s.generation+=1;}
  Ok(json!({"profile":profile,"expires_at":data["expires_at"]}))
 }
 #[tauri::command] async fn api_request(profile_id:String,path:String,method:String,body:Option<Value>)->Result<Value,String> {
  if !allowed_request(&path,&method){return Err("请求路径或方法不被允许。".into());}
- let (endpoint,token)=if let Some(endpoint)=cloud_endpoint()? {(endpoint,session().lock().unwrap().token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
+ let snapshot=session_snapshot()?;
+ if snapshot.endpoint.is_some() && !profile_id.is_empty() && snapshot.profile.as_ref().and_then(|p|p["id"].as_str())!=Some(profile_id.as_str()) {return Err("请求身份与当前会话不匹配。".into());}
+ let (endpoint,token)=if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
+ if session().lock().unwrap().generation!=snapshot.generation {return Err("会话已变更，请重新读取数据。".into());}
  let result=fetch_api(&endpoint,&path,&method,body,token.clone()).await?;
- if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.token==token {s.token=None;s.profile=None;s.generation+=1;}}
+ if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.generation==snapshot.generation && s.token==token {s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;}}
  Ok(result)
 }
 fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
 #[cfg(test)] mod tests {
  use super::*;
+ #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}
  #[test]
  #[ignore = "requires explicitly configured local development API and credential file"]
  fn native_bridge_reads_real_local_api_without_exposing_tokens(){let profiles=local_profiles().expect("local profiles available"); assert_eq!(profiles.len(),3); let public=serde_json::to_value(&profiles).unwrap();assert!(public.as_array().unwrap().iter().all(|p|p.get("token").is_none()));let me=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/me".into(),"GET".into(),None)).unwrap();assert_eq!(me["data"]["kind"],"human");}
@@ -77,5 +91,7 @@ fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![conn
  #[test] fn endpoint_rejects_credentials_paths_and_insecure_urls(){assert_eq!(trusted_origin("https://example.com/").unwrap(),"https://example.com");for value in ["http://example.com","https://user:pass@example.com","https://example.com/v1","https://example.com?secret=x","file:///secret"] {assert!(trusted_origin(value).is_err());}}
  #[test] fn only_allows_graybox_api_routes_and_safe_methods(){assert!(allowed_request("/v1/projects","GET"));assert!(allowed_request("/v1/experiments?project_id=abcd-1234","GET"));assert!(allowed_request("/v1/commands","POST"));assert!(!allowed_request("https://example.com","GET"));assert!(!allowed_request("/v1/commands","DELETE"));assert!(!allowed_request("/v1/projects%2f..%2fsecret","GET"));}
 }
+
+
 
 

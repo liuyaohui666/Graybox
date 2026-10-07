@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useContext } from "react";
 import { createRoot } from "react-dom/client";
 import { profiles, request, ApiError, type Profile } from "./platform.ts";
-import { CommandRetry } from "./retry.ts";
+import { commandRetry } from "./retry.ts";
+import { writeSafety } from "./write-safety.ts";
 import {
   evidenceLabel,
   reviewQueue,
@@ -12,7 +13,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
-import { SessionGate } from "./cloud-ui.tsx";
+import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 
 type Page = "home" | "projects" | "experiments" | "activity";
 type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
@@ -35,6 +36,7 @@ const date = (s?: string) =>
     : "—";
 
 function App() {
+  const mode = useContext(ConnectionModeContext);
   const [people, setPeople] = useState<Profile[]>([]),
     [profile, setProfile] = useState("");
   const [page, setPage] = useState<Page>("home"),
@@ -57,7 +59,7 @@ function App() {
     undoModal = useRef<HTMLDialogElement>(null),
     identity = useRef(""),
     selection = useRef("");
-  const pending = useRef(new CommandRetry());
+  const pending = useRef(commandRetry);
   const activeProfile = people.find((p) => p.id === profile);
   function navigate(next: Page) {
     selection.current = "";
@@ -106,7 +108,7 @@ function App() {
     setActivity([]);
     setLoaded(false);
     setError("");
-    pending.current.clear();
+    if (!writeSafety.snapshot()) pending.current.clear();
     if (!profile) return;
     const update = () =>
       refresh(profile).catch((e) => {
@@ -298,7 +300,7 @@ function App() {
         <div className="workspace">
           <span className="workspace-icon">G</span>
           <div>
-            本地研发空间<small>{workspaces[0]?.name ?? "连接中"}</small>
+            {mode === "cloud" ? "团队研发空间" : "本地研发空间"}<small>{workspaces[0]?.name ?? "连接中"}</small>
           </div>
           <span className="live-dot" />
         </div>
@@ -368,7 +370,7 @@ function App() {
           </div>
           <span className="local-status">
             <span className="live-dot" />
-            本地开发 · 数据保存在此电脑
+            {mode === "cloud" ? "云端团队 · 数据保存在团队服务器" : "本地开发 · 数据保存在此电脑"}
           </span>
         </header>
         <div className="content">
@@ -838,7 +840,7 @@ function App() {
             <span>
               GRAYBOX <b>·</b> 留下结果，也留下为什么。
             </span>
-            <span>本地版本 0.1 · 自动刷新 15 秒</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.1 · 自动刷新 15 秒</span>
           </footer>
         </div>
       </main>
@@ -1063,5 +1065,7 @@ createRoot(document.getElementById("root")!).render(
     <SessionGate><App /></SessionGate>
   </React.StrictMode>,
 );
+
+
 
 

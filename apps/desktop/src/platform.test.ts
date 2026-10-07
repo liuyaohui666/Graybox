@@ -39,3 +39,32 @@ it("a delayed rejection from an older session cannot clear a newer login",async(
  rejectOld?.({headers:new Headers({"content-type":"application/json"}),json:async()=>({error:{code:"UNAUTHORIZED",message:"old session revoked"}})});
  await expect(old).rejects.toThrow("old session revoked");expect((await p.profiles())[0].id).toBe("human-2");
 });
+it("cloud HTTP authentication is rejected before credentials are sent",async()=>{
+ vi.stubGlobal("window",{location:{origin:"http://graybox.example.com"}});const fetch=vi.fn();vi.stubGlobal("fetch",fetch);
+ const p=await import("./platform.ts");await expect(p.authenticate("login",{})).rejects.toThrow("HTTPS");expect(fetch).not.toHaveBeenCalled();
+});
+it("explicit local mode permits numeric loopback HTTP only",async()=>{
+ vi.stubEnv("VITE_GRAYBOX_MODE","local");vi.stubGlobal("window",{location:{origin:"http://localhost:4317"}});
+ const p=await import("./platform.ts");await expect(p.connection()).rejects.toThrow("数字回环");
+});
+it("explicit loopback testing never permits non-loopback HTTP cloud transport",async()=>{
+ vi.stubEnv("VITE_GRAYBOX_ALLOW_LOOPBACK_TEST","1");vi.stubGlobal("window",{location:{origin:"http://127.0.0.1:4329"}});const p=await import("./platform.ts");expect((await p.connection()).mode).toBe("cloud");vi.stubGlobal("window",{location:{origin:"http://graybox.example.com"}});await expect(p.connection()).rejects.toThrow("HTTPS");
+});
+it("logout and new credentials cannot discard or replay an uncertain write",async()=>{
+ let networkFailure=false;
+ vi.stubGlobal("fetch",vi.fn(async(url:string)=>{
+  if(networkFailure && url.endsWith("commands"))throw new Error("connection lost");
+  return {headers:new Headers({"content-type":"application/json"}),json:async()=>({data: url.endsWith("login") ? {token:crypto.randomUUID(),profile:{id:"human",name:"User",role:"member"}} : {ok:true}})};
+ }));
+ const p=await import("./platform.ts");await p.authenticate("login",{});networkFailure=true;
+ await expect(p.request("human","/v1/commands","POST",{idempotency_key:"key"})).rejects.toThrow("connection lost");
+ await expect(p.logout()).rejects.toThrow("未确认");await p.authenticate("login",{});networkFailure=false;
+ await expect(p.request("human","/v1/commands","POST",{idempotency_key:"key"})).rejects.toThrow("重新登录");
+ const {writeSafety}=await import("./write-safety.ts");expect(writeSafety.snapshot()?.ambiguous).toBe(true);writeSafety.acknowledge();await p.logout();
+});
+it("a delayed successful login cannot overwrite a newer session",async()=>{
+ let resolveOld: ((value: unknown)=>void)|undefined;let calls=0;
+ const response=(id:string)=>({headers:new Headers({"content-type":"application/json"}),json:async()=>({data:{token:`token-${id}`,profile:{id,name:"User",role:"member"}}})});
+ vi.stubGlobal("fetch",vi.fn(async()=>{calls++;if(calls===1)return new Promise(resolve=>{resolveOld=resolve;});return response("new");}));
+ const p=await import("./platform.ts");const old=p.authenticate("login",{});await vi.waitFor(()=>expect(resolveOld).toBeDefined());await p.authenticate("login",{});resolveOld?.(response("old"));await expect(old).rejects.toThrow("会话已变更");expect((await p.profiles())[0].id).toBe("new");
+});

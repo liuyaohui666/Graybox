@@ -7,7 +7,8 @@ export class CommandRetry {
   prepare(profile: string, type: string, payload: object, revision?: number) {
     // A refresh must not change the identity or revision of an ambiguous attempt.
     const signature = JSON.stringify({ profile, type, payload });
-    if (!this.pending || this.pending.signature !== signature)
+    if (this.pending && this.pending.signature !== signature) throw new Error("上次写入结果未确认，请先重试原操作或核对记录后解除标记。");
+    if (!this.pending)
       this.pending = { signature, body: command(type, payload, revision) };
     return this.pending.body;
   }
@@ -31,3 +32,5 @@ export class CommandRetry {
       this.clear();
   }
 }
+
+export const commandRetry = new CommandRetry();
