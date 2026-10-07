@@ -1,16 +1,23 @@
+import {CloudAuth} from '../../../packages/core/src/cloud-auth.ts';
 import Fastify from 'fastify';
 import type { Pool } from 'pg';
 import cors from '@fastify/cors';
 import { z } from 'zod';
 import { DomainError,Service } from '../../../packages/core/src/service.ts';
 import type { Principal } from '../../../packages/contracts/src/index.ts';
-export async function buildApp(options: {pool:Pool;mode:string}) {
-  if(options.mode!=='local') throw new Error('Production start disabled: real Auth integration is required');
-  const app=Fastify({logger:false,bodyLimit:256*1024}); const service=new Service(options.pool);
+export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) {
+  if(!['local','cloud'].includes(options.mode)) throw new Error('Production start disabled: unsupported mode');
+  if(options.mode==='cloud'&&!options.authPool) throw new Error('Cloud authPool required');
+  const auth=options.mode==='cloud'?new CloudAuth(options.authPool!):null;
+  const publicRoutes=new Set(['/v1/health',...(auth?['/v1/auth/login','/v1/auth/redeem','/v1/auth/pair/start','/v1/auth/pair/poll']:[])]);
+  const limits=new Map<string,{count:number;until:number}>();
+  const app=Fastify({logger:false,bodyLimit:256*1024}); const service=new Service(options.pool,options.mode as 'local'|'cloud');
   await app.register(cors,{origin:['http://127.0.0.1:1420','http://localhost:1420','http://127.0.0.1:5173','http://localhost:5173','http://tauri.localhost','tauri://localhost'],methods:['GET','POST'],allowedHeaders:['authorization','content-type']});
   app.decorateRequest('principal',null);
   app.addHook('preHandler',async request=> {
-    if(request.url.split('?')[0]==='/v1/health' || request.method==='OPTIONS') return;
+    const path=request.url.split('?')[0];
+    if(auth&&path.startsWith('/v1/auth/')){const key=request.ip;let limit=limits.get(key);if(!limit||limit.until<Date.now()){limit={count:0,until:Date.now()+60000};limits.set(key,limit);}if(++limit.count>30) throw new DomainError('RATE_LIMITED','Try again later',429);if(limits.size>10000) for(const [k,v] of limits)if(v.until<Date.now())limits.delete(k);if(limits.size>10000)throw new DomainError('RATE_LIMITED','Try again later',429);}
+    if(publicRoutes.has(path) || request.method==='OPTIONS') return;
     const authorization=request.headers.authorization??'';
     if(!authorization.startsWith('Bearer ')) throw new DomainError('UNAUTHORIZED','Bearer credential required',401);
     (request as typeof request & {principal:Principal}).principal=await service.authenticate(authorization.slice(7));
@@ -34,5 +41,15 @@ export async function buildApp(options: {pool:Pool;mode:string}) {
   app.post('/v1/commands',async request=>({data:await service.command(principal(request),request.body)}));
   app.post<{Params:{id:string}}>('/v1/batches/:id/preview',async request=> {if(request.body && (typeof request.body!=='object'||Object.keys(request.body).length)) throw new DomainError('VALIDATION','Preview body must be empty',400);return {data:await service.preview(principal(request),id(request.params.id))};});
   app.post<{Params:{id:string}}>('/v1/batches/:id/undo',async request=>({data:await service.undo(principal(request),id(request.params.id),request.body)}));
+  if(auth){
+    app.post('/v1/auth/login',async r=>({data:await auth.login(r.body)}));
+    app.post('/v1/auth/redeem',async r=>({data:await auth.redeem(r.body)}));
+    app.post('/v1/auth/pair/start',async r=>({data:await auth.pairStart(r.body)}));
+    app.post('/v1/auth/pair/poll',async r=>({data:await auth.pairPoll(r.body)}));
+    for(const [path,action] of [['/v1/auth/me','me'],['/v1/members','members'],['/v1/agents','agents']])app.get(path,async r=>({data:await auth.action(principal(r),action,{})}));
+    for(const [path,action] of [['/v1/auth/logout','logout'],['/v1/members/invite','invite'],['/v1/agents/pair/approve','approve']])app.post(path,async r=>({data:await auth.action(principal(r),action,r.body)}));
+    app.post<{Params:{id:string}}>('/v1/members/:id/disable',async r=>({data:await auth.action(principal(r),'disable',r.body,id(r.params.id))}));
+    app.post<{Params:{id:string}}>('/v1/agents/:id/revoke',async r=>({data:await auth.action(principal(r),'revoke',r.body,id(r.params.id))}));
+  }
   return app;
 }

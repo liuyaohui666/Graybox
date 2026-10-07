@@ -16,15 +16,15 @@ type EntityType=keyof typeof tables;
 type Change={entity_type:EntityType;entity_id:string;project_id:string;before:Entity|null;after:Entity;expected_revision:number};
 export class Service {
   private previewSecret=randomBytes(32);
-  constructor(private pool:Pool) {}
+  constructor(private pool:Pool,private mode:'local'|'cloud'='local') {}
   async authenticate(token:string):Promise<Principal> {
     if(!token || token.length>512) return fail('UNAUTHORIZED','Valid local credential required',401);
-    const row=(await this.pool.query('SELECT id,human_id,agent_id,kind,project_ids FROM graybox.credentials WHERE token_hash=$1 AND revoked_at IS NULL',[createHash('sha256').update(token).digest('hex')])).rows[0] as Principal|undefined;
+    const row=(await this.pool.query(`SELECT c.id,c.human_id,c.agent_id,c.kind,c.project_ids FROM graybox.credentials c JOIN graybox.users u ON u.id=c.human_id WHERE token_hash=$1 AND revoked_at IS NULL AND ($2='local' OR (c.expires_at>now() AND u.username IS NOT NULL)) AND (c.expires_at IS NULL OR c.expires_at>now()) AND u.disabled_at IS NULL`,[createHash('sha256').update(token).digest('hex'),this.mode])).rows[0] as Principal|undefined;
     return row ?? fail('UNAUTHORIZED','Valid local credential required',401);
   }
   scope(p:Principal,projectId:string) { if(p.project_ids && !p.project_ids.includes(projectId)) fail('FORBIDDEN','Project is outside credential scope',403); }
   private async currentPrincipal(c:Pool|PoolClient,id:string):Promise<Principal> {
-    const row=(await c.query('SELECT * FROM graybox.authoritative_credential($1)',[id])).rows[0] as Principal|undefined;
+    const row=(await c.query(`SELECT a.* FROM graybox.authoritative_credential($1) a JOIN graybox.credentials c ON c.id=a.id JOIN graybox.users u ON u.id=a.human_id WHERE ($2='local' OR (c.expires_at IS NOT NULL AND u.username IS NOT NULL))`,[id,this.mode])).rows[0] as Principal|undefined;
     return row??fail('UNAUTHORIZED','Credential revoked',401);
   }
   private async transaction<T>(p:Principal,fn:(c:PoolClient,current:Principal)=>Promise<T>):Promise<T> {
@@ -81,7 +81,7 @@ export class Service {
     const rows=(await this.pool.query('SELECT * FROM graybox.activities WHERE ($1::uuid IS NULL OR entity_id=$1) AND ($2::uuid IS NULL OR batch_id=$2) ORDER BY created_at,id',[entity_id??null,batch_id??null])).rows;
     return rows.filter(row=>p.project_ids===null || p.project_ids.includes(row.project_id));
   }
-  async health() {return {environment_id:(await this.pool.query("SELECT value FROM graybox.metadata WHERE key='environment_id'")).rows[0].value,mode:'local'};}
+  async health() {return {environment_id:(await this.pool.query("SELECT value FROM graybox.metadata WHERE key='environment_id'")).rows[0].value,mode:this.mode};}
   async workspaces() {return (await this.pool.query('SELECT * FROM graybox.workspaces ORDER BY name')).rows;}
   private async children(c:Pool|PoolClient,table:'evidence'|'submissions',id:string) {
     return normalize((await c.query(`SELECT x.* FROM graybox.${table} x WHERE experiment_id=$1 AND NOT EXISTS(SELECT 1 FROM graybox.tombstones t WHERE t.entity_type=$2 AND t.entity_id=x.id) ORDER BY created_at,id`,[id,table==='evidence'?'evidence':'submission'])).rows);
