@@ -45,3 +45,12 @@ TDD/validation commands run from graybox:
 - `node_modules/.bin/vite.cmd build --config apps/desktop/vite.config.ts`: passed after final changes, 25 modules; index-DvROPcwt.js 264.12 kB (gzip 81.92 kB).
 
 Unit tests verify guard/retry logic and initial component rendering. Parent performs actual browser interaction and delayed/ambiguous recovery acceptance after this commit. No backend/database changes or browser-created project edits by this worker.
+
+
+## Final browser finding fixes (2026-10-08)
+
+Accepted global navigation now advances a library mount generation, including same-page Home/Projects clicks. Blocked busy/synchronous/ambiguous navigation leaves the generation unchanged; periodic refresh never advances it. App retains tag filter state, and project creation still navigates before setting the returned ID for detail auto-opening.
+
+App profile refresh failures now have their own read-error state. Latest sequence/current identity checks apply to both success and failure. A healthy current refresh clears only this read error; write/recovery errors remain. Read failures are handled inside refresh so a successful command followed by a failed read cannot be mislabeled as a failed write. The global reread button also preserves an existing operation error.
+
+Validation: new helper import first failed red; minimal pre-fix helper then reproduced 4 behavioral failures (generation, stale resolve/reject, changed-profile callbacks). Final focused tests passed 5 files / 18 tests; pnpm typecheck passed; pnpm build:web passed (26 modules). Controlled deferred promises exercise stale completion ordering. No backend/client/cloud/user-data changes. Parent reruns actual browser navigation, creation/tag retention and outage/retry acceptance after this commit; this worker has not claimed interactive acceptance.

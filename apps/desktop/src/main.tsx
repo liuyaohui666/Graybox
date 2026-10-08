@@ -12,7 +12,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
-import { navigationBlocked } from "./library-write-guard.ts";
+import { LibraryNavigation, LatestProfileRefresh } from "./library-app-state.ts";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 
@@ -43,7 +43,10 @@ function App() {
     [profile, setProfile] = useState("");
   const [createdProject, setCreatedProject] = useState("");
   const [libraryTag,setLibraryTag]=useState("");
-  const refreshSequence = useRef(0), mutationLock = useRef(false);
+  const refreshState = useRef(new LatestProfileRefresh()), mutationLock = useRef(false);
+  const navigation = useRef(new LibraryNavigation());
+  const [navigationGeneration, setNavigationGeneration] = useState(0);
+  const [refreshError, setRefreshError] = useState("");
   const [page, setPage] = useState<Page>("home"),
     [projects, setProjects] = useState<Project[]>([]),
     [experiments, setExperiments] = useState<Experiment[]>([]),
@@ -67,7 +70,9 @@ function App() {
   const pending = useRef(commandRetry);
   const activeProfile = people.find((p) => p.id === profile);
   function navigate(next: Page, completedWrite=false) {
-    if (!completedWrite && navigationBlocked(busy,mutationLock.current,writeSafety.snapshot())) return false;
+    const generation = navigation.current.accept(busy,mutationLock.current,writeSafety.snapshot(),completedWrite);
+    if (generation === null) return false;
+    setNavigationGeneration(generation);
     setCreatedProject("");
     selection.current = "";
     setDetail(null);
@@ -76,25 +81,25 @@ function App() {
   }
   async function refresh(id = profile) {
     if (!id) return;
-    const sequence = ++refreshSequence.current;
-    const values = await Promise.all([
+    await refreshState.current.run(id, () => identity.current, () => Promise.all([
       request<Project[]>(id, "/v1/projects"),
       request<Experiment[]>(id, "/v1/experiments"),
       request<Activity[]>(id, "/v1/activity"),
       request<{ id: string; name: string }[]>(id, "/v1/workspaces"),
-    ]);
-    if (identity.current !== id || sequence !== refreshSequence.current) return;
-    setProjects(values[0]);
-    setExperiments(
-      values[1].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    );
-    setActivity(
-      values[2].sort((a, b) =>
-        (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-      ),
-    );
-    setWorkspaces(values[3]);
-    setLoaded(true);
+    ]), (values) => {
+      setProjects(values[0]);
+      setExperiments(
+        values[1].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+      );
+      setActivity(
+        values[2].sort((a, b) =>
+          (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+        ),
+      );
+      setWorkspaces(values[3]);
+      setLoaded(true);
+      setRefreshError("");
+    }, (error) => setRefreshError(error.message));
   }
   useEffect(() => {
     profiles()
@@ -119,12 +124,10 @@ function App() {
     setActivity([]);
     setLoaded(false);
     setError("");
+    setRefreshError("");
     if (!writeSafety.snapshot()) pending.current.clear();
     if (!profile) return;
-    const update = () =>
-      refresh(profile).catch((e) => {
-        if (identity.current === profile) setError(e.message);
-      });
+    const update = () => { void refresh(profile); };
     update();
     const interval = setInterval(update, 15000);
     window.addEventListener("focus", update);
@@ -437,15 +440,14 @@ function App() {
                 : "新建实验"}
             </button>
           </div>
-          {error && (
+          {(error || refreshError) && (
             <div className="error" role="alert">
               <strong>操作未完成</strong>
-              <span>{error}</span>
+              <span>{error || refreshError}</span>
               <button
                 onClick={() => {
-                  setError("");
-                  void refresh().catch((e) => setError(e.message));
-                  if (detail) void showExperiment(detail.id);
+                  void refresh();
+                  if (detail && !error) void showExperiment(detail.id);
                 }}
               >
                 重新读取最新数据
@@ -460,11 +462,11 @@ function App() {
               </button>
             </div>
           )}
-          {!loaded && !error && <div className="empty">正在读取研发记录…</div>}
+          {!loaded && !error && !refreshError && <div className="empty">正在读取研发记录…</div>}
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
-                {(page === "home" || page === "projects") && <ProjectLibrary profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={(tag)=>{if(navigate("projects"))setLibraryTag(tag);}} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
+                {(page === "home" || page === "projects") && <ProjectLibrary key={navigationGeneration} profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={(tag)=>{if(navigate("projects"))setLibraryTag(tag);}} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
                 {page === "experiments" && (
                   <div className="filters">
                     <input
