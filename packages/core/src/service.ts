@@ -230,6 +230,7 @@ export class Service {
     const sorted=[...changes.values()].sort((a,b)=>`${a.entity_type}:${a.entity_id}`.localeCompare(`${b.entity_type}:${b.entity_id}`));
     for(const change of sorted) {
       const current=await this.entity(c,change.entity_type,change.entity_id,true);
+      if(change.entity_type==='project') await this.editable(c,p,current);
       if(current.revision!==change.expected_revision) fail('UNDO_CONFLICT','Entity has a later revision');
       const firstRevision=change.before?.revision??0;
       const later=await c.query("SELECT id FROM graybox.activities WHERE entity_type=$1 AND entity_id=$2 AND batch_id<>$3 AND (after->>'revision')::integer>$4",[change.entity_type,change.entity_id,batchId,firstRevision]);

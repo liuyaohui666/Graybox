@@ -33,3 +33,30 @@ test('legacy creator without original creation audit stays owner-only; lifecycle
 test('runtime cannot update/delete reports comments tags or forge creator through contract',async()=>{const p=await project();expect((await cmd('project_update',{id:p.id,creator_id:f.humans[0]!.id},1)).status).toBe(400);for(const sql of ['UPDATE graybox.retrospectives SET data=data','DELETE FROM graybox.retrospectives','UPDATE graybox.comments SET body=body','DELETE FROM graybox.comments','DELETE FROM graybox.tags'])await expect(runtime.query(sql)).rejects.toHaveProperty('code','42501');});
 
 test('undo of historical metadata audit fills library defaults while preserving original status',async()=>{const p=await project();const batch=randomUUID();await cmd('project_update',{id:p.id,name:'Changed'},1,f.tokens.member_agent,batch);await admin.query("UPDATE graybox.activities SET before=before-'lifecycle'-'priority'-'tags' WHERE batch_id=$1 AND entity_type='project'",[batch]);const pr=await req('POST',`/v1/batches/${batch}/preview`,{});await req('POST',`/v1/batches/${batch}/undo`,{expected_batch_revision:pr.data.batch_revision,preview_token:pr.data.preview_token,idempotency_key:randomUUID()});const restored=(await req('GET',`/v1/projects/${p.id}`)).data;expect(restored.lifecycle).toBe('in_progress');expect(restored.priority).toBe('medium');expect(restored.tags).toEqual([]);});
+
+test('demoted owner cannot preview or execute historical metadata undo',async()=>{
+  const p=await project(),batch=randomUUID(),token=f.tokens.owner_agent;
+  expect((await cmd('project_update',{id:p.id,name:'Owner edit'},1,token,batch)).status).toBe(200);
+  const pr=await req('POST',`/v1/batches/${batch}/preview`,{},token);
+  expect(pr.status).toBe(200);
+  await admin.query("UPDATE graybox.users SET role='member' WHERE id=$1",[f.humans[0]!.id]);
+  expect((await cmd('project_update',{id:p.id,name:'Forbidden'},2,token)).status).toBe(403);
+  const preview=await req('POST',`/v1/batches/${batch}/preview`,{},token);
+  const undo=await req('POST',`/v1/batches/${batch}/undo`,{expected_batch_revision:pr.data.batch_revision,preview_token:pr.data.preview_token,idempotency_key:randomUUID()},token);
+  expect(preview.status).toBe(403);expect(preview.error.code).toBe('FORBIDDEN');
+  expect(undo.status).toBe(403);expect(undo.error.code).toBe('FORBIDDEN');
+  const unchanged=(await req('GET',`/v1/projects/${p.id}`)).data;
+  expect(unchanged.name).toBe('Owner edit');expect(unchanged.revision).toBe(2);
+  expect((await admin.query('SELECT count(*)::int n FROM graybox.batches WHERE compensates=$1',[batch])).rows[0].n).toBe(0);
+});
+
+test('successful undo receipt remains replayable after owner demotion',async()=>{
+  const p=await project(),batch=randomUUID(),token=f.tokens.owner_agent;
+  await cmd('project_update',{id:p.id,name:'Owner edit'},1,token,batch);
+  const pr=await req('POST',`/v1/batches/${batch}/preview`,{},token);
+  const input={expected_batch_revision:pr.data.batch_revision,preview_token:pr.data.preview_token,idempotency_key:randomUUID()};
+  const receipt=await req('POST',`/v1/batches/${batch}/undo`,input,token);expect(receipt.status).toBe(200);
+  await admin.query("UPDATE graybox.users SET role='member' WHERE id=$1",[f.humans[0]!.id]);
+  expect(await req('POST',`/v1/batches/${batch}/undo`,input,token)).toEqual(receipt);
+  expect((await req('GET',`/v1/projects/${p.id}`)).data.revision).toBe(3);
+});
