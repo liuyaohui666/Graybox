@@ -50,6 +50,11 @@ export interface Project {
   name: string;
   description: string;
   status: string;
+  lifecycle: string;
+  priority: string;
+  tags: string[];
+  creator_name?: string | null;
+  can_edit: boolean;
   workspace_id: string;
   revision: number;
   updated_at: string;

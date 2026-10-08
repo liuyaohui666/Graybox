@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin } from "vite";
+import { allowedLocalRequest } from "./src/request-path.ts";
 import react from "@vitejs/plugin-react";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -62,9 +63,7 @@ function localBridge(): Plugin {
           if (
             !profile ||
             !["GET", "POST"].includes(input.method) ||
-            !/^\/v1\/(me|health|workspaces|projects|experiments|activity|commands|batches)([/?][a-zA-Z0-9_?=&/-]*)?$/.test(
-              input.path,
-            )
+            !allowedLocalRequest(input.path, input.method)
           )
             throw new Error("Request rejected");
           const response = await fetch("http://127.0.0.1:4318" + input.path, {

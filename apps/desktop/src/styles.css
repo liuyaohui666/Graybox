@@ -1073,3 +1073,14 @@ textarea::placeholder {
   #root > section.session { padding: 20px 14px; }
 }
 
+:root .library-form { display: grid; gap: 16px; margin: 20px 0; padding: 20px; background: var(--surface, #fff); border: 1px solid #dedfd8; border-radius: 12px; }
+.library-form label { display: grid; gap: 8px; }
+.library-form textarea, .library-form input, .library-form select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #d8dbd2; border-radius: 6px; font: inherit; }
+.library-tags { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.library-tags button { border: 1px solid #d8dbd2; border-radius: 6px; padding: 6px 10px; }
+.library-report, .library-comment { padding: 20px; margin: 16px 0; background: #fff; border: 1px solid #dedfd8; border-radius: 12px; overflow-wrap: anywhere; }
+.library-report h4 { margin: 18px 0 6px; }
+.library-report .prose, .library-comment .prose { white-space: pre-wrap; }
+.project-library .experiment-row small { display: block; margin-top: 5px; color: #72766c; }
+.project-library .project-card { text-align: left; }
+.library-form[hidden] { display: none; }

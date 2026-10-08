@@ -5,7 +5,6 @@ import { commandRetry } from "./retry.ts";
 import { writeSafety } from "./write-safety.ts";
 import {
   evidenceLabel,
-  reviewQueue,
   statusLabel,
   type Project,
   type Experiment,
@@ -13,6 +12,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
+import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 
 type Page = "home" | "projects" | "experiments" | "activity";
@@ -40,6 +40,8 @@ function App() {
   const pendingWrite = useSyncExternalStore(writeSafety.subscribe, writeSafety.snapshot);
   const [people, setPeople] = useState<Profile[]>([]),
     [profile, setProfile] = useState("");
+  const [createdProject, setCreatedProject] = useState("");
+  const refreshSequence = useRef(0), mutationLock = useRef(false);
   const [page, setPage] = useState<Page>("home"),
     [projects, setProjects] = useState<Project[]>([]),
     [experiments, setExperiments] = useState<Experiment[]>([]),
@@ -63,19 +65,21 @@ function App() {
   const pending = useRef(commandRetry);
   const activeProfile = people.find((p) => p.id === profile);
   function navigate(next: Page) {
+    setCreatedProject("");
     selection.current = "";
     setDetail(null);
     setPage(next);
   }
   async function refresh(id = profile) {
     if (!id) return;
+    const sequence = ++refreshSequence.current;
     const values = await Promise.all([
       request<Project[]>(id, "/v1/projects"),
       request<Experiment[]>(id, "/v1/experiments"),
       request<Activity[]>(id, "/v1/activity"),
       request<{ id: string; name: string }[]>(id, "/v1/workspaces"),
     ]);
-    if (identity.current !== id) return;
+    if (identity.current !== id || sequence !== refreshSequence.current) return;
     setProjects(values[0]);
     setExperiments(
       values[1].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
@@ -103,6 +107,7 @@ function App() {
     setDialog(null);
     setUndo(null);
     setProjectFilter("");
+    setCreatedProject("");
     setWorkspaces([]);
     setProjects([]);
     setExperiments([]);
@@ -160,11 +165,14 @@ function App() {
     }
   }
   async function mutate(type: string, payload: object, revision?: number) {
+    if (mutationLock.current) return;
+    mutationLock.current = true;
     setBusy(true);
     setError("");
     setNotice("");
     try {
       const result = await send(type, payload, revision);
+      if (type === "project_create") { navigate("projects"); setCreatedProject(result.id); }
       setDialog(null);
       setNotice(
         type === "review_submit"
@@ -183,6 +191,7 @@ function App() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      mutationLock.current = false;
       setBusy(false);
     }
   }
@@ -278,8 +287,7 @@ function App() {
       setBusy(false);
     }
   }
-  const waiting = reviewQueue(experiments),
-    view = experiments.filter(
+  const view = experiments.filter(
       (e) =>
         (!projectFilter || e.project_id === projectFilter) &&
         (!filter ||
@@ -295,7 +303,7 @@ function App() {
         <div className="brand">
           <span className="brandmark">▧</span>
           <div>
-            Graybox<small>研发记忆工作台</small>
+            Graybox<small>团队创意与经验</small>
           </div>
         </div>
         <div className="workspace">
@@ -306,7 +314,7 @@ function App() {
           <span className="live-dot" />
         </div>
         <div className="nav-label">工作台</div>
-        <nav inert={busy}>
+        <nav inert={busy || !!pendingWrite}>
           {(
             [
               ["home", "◫", "首页"],
@@ -325,7 +333,6 @@ function App() {
             >
               <span>{icon}</span>
               {label}
-              {id === "home" && waiting.length > 0 && <b>{waiting.length}</b>}
             </button>
           ))}
         </nav>
@@ -390,7 +397,7 @@ function App() {
               <h1>
                 {
                   {
-                    home: "让每次尝试，都有来处。",
+                    home: "团队创意与经验",
                     projects: "项目",
                     experiments: "实验记录",
                     activity: "谁在什么时候，改变了什么。",
@@ -400,8 +407,8 @@ function App() {
               <p>
                 {
                   {
-                    home: "从结果继续，让下一次实验少走一点弯路。",
-                    projects: "长期工程与作品，是实验的起点。",
+                    home: "先推进重要创意，再从项目经验继续。",
+                    projects: "一起积累创意、项目经验与讨论。",
                     experiments: "保存不同版本，也保留当时的目标与判断。",
                     activity: "变更与撤销都留在这里。",
                   }[page]
@@ -410,17 +417,17 @@ function App() {
             </div>
             <button
               className="primary"
-              disabled={!loaded || busy}
+              disabled={!loaded || busy || !!pendingWrite}
               onClick={() =>
                 setDialog(
-                  page === "projects" || projects.length === 0
+                  page !== "experiments" || projects.length === 0
                     ? "project"
                     : "experiment",
                 )
               }
             >
               ＋{" "}
-              {page === "projects" || projects.length === 0
+              {page !== "experiments" || projects.length === 0
                 ? "新建项目"
                 : "新建实验"}
             </button>
@@ -452,131 +459,7 @@ function App() {
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
-                {page === "home" && (
-                  <>
-                    <div className="section-heading">
-                      <h2>
-                        <i className="signal" />
-                        等你判断{" "}
-                        <span>
-                          {waiting.length.toString().padStart(2, "0")}
-                        </span>
-                      </h2>
-                      <span className="muted">机器记录之后，是你的判断</span>
-                    </div>
-                    {waiting.length === 0 ? (
-                      <div className="empty waiting-empty">
-                        <span>◇</span>
-                        <h3>暂时没有待验收实验</h3>
-                        <p>让 Codex 完成记录并提交验收，结果就会来到这里。</p>
-                      </div>
-                    ) : (
-                      <div className="review-list">
-                        {waiting.map((e) => (
-                          <button
-                            className="review-card"
-                            key={e.id}
-                            onClick={() => void showExperiment(e.id)}
-                          >
-                            <div className="review-top">
-                              <span className="project-path">
-                                {projectName(e.project_id)}
-                              </span>
-                              <span className="status waiting_for_review">
-                                待验收
-                              </span>
-                            </div>
-                            <div className="review-title">
-                              <span className="version">v{e.version}</span>
-                              <h3>{e.name}</h3>
-                              <span className="arrow">↗</span>
-                            </div>
-                            <p>{e.goal}</p>
-                            <div className="review-footer">
-                              <span>查看提交快照与技术记录</span>
-                              <span>{date(e.updated_at)}</span>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="section-heading spaced">
-                      <h2>继续开发</h2>
-                      <button
-                        className="text-button"
-                        onClick={() => navigate("projects")}
-                      >
-                        全部项目 →
-                      </button>
-                    </div>
-                    <div className="project-grid">
-                      {projects.slice(0, 3).map((p, i) => (
-                        <button
-                          className="project-card"
-                          key={p.id}
-                          onClick={() => {
-                            navigate("experiments");
-                            setProjectFilter(p.id);
-                          }}
-                        >
-                          <div className="project-symbol">
-                            {["▧", "◇", "⌘"][i % 3]}
-                          </div>
-                          <h3>{p.name}</h3>
-                          <p>{p.description || "尚未填写项目说明"}</p>
-                          <span>
-                            {
-                              experiments.filter((e) => e.project_id === p.id)
-                                .length
-                            }{" "}
-                            个实验 <b>→</b>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="section-heading spaced">
-                      <h2>最近实验</h2>
-                      <button
-                        className="text-button"
-                        onClick={() => navigate("experiments")}
-                      >
-                        查看全部 →
-                      </button>
-                    </div>
-                  </>
-                )}
-                {page === "projects" && (
-                  <div className="project-grid large">
-                    {projects.map((p, i) => (
-                      <button
-                        className="project-card"
-                        key={p.id}
-                        onClick={() => {
-                          setProjectFilter(p.id);
-                          navigate("experiments");
-                        }}
-                      >
-                        <div className="project-symbol">
-                          {["▧", "◇", "⌘"][i % 3]}
-                        </div>
-                        <h3>{p.name}</h3>
-                        <p>{p.description || "尚未填写说明"}</p>
-                        <span>
-                          {
-                            experiments.filter((e) => e.project_id === p.id)
-                              .length
-                          }{" "}
-                          个实验 <b>→</b>
-                        </span>
-                      </button>
-                    ))}
-                    {projects.length === 0 && (
-                      <div className="empty">
-                        建立第一个项目，开始积累研发记忆。
-                      </div>
-                    )}
-                  </div>
-                )}
+                {(page === "home" || page === "projects") && <ProjectLibrary profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} openExperiment={(id) => {navigate("experiments"); void showExperiment(id);}} />}
                 {page === "experiments" && (
                   <div className="filters">
                     <input
@@ -599,14 +482,14 @@ function App() {
                     </select>
                   </div>
                 )}
-                {(page === "home" || page === "experiments") && (
+                {page === "experiments" && (
                   <div className="experiment-table">
                     <div className="table-head">
                       <span>实验 / 项目</span>
                       <span>状态</span>
                       <span>最近记录</span>
                     </div>
-                    {(page === "home" ? experiments.slice(0, 6) : view).map(
+                    {view.map(
                       (e) => (
                         <button
                           key={e.id}
@@ -632,7 +515,7 @@ function App() {
                         </button>
                       ),
                     )}
-                    {(page === "home" ? experiments : view).length === 0 && (
+                    {view.length === 0 && (
                       <div className="empty compact">
                         还没有符合条件的实验。
                       </div>
@@ -841,7 +724,7 @@ function App() {
             <span>
               GRAYBOX <b>·</b> 留下结果，也留下为什么。
             </span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.1 · 自动刷新 15 秒</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.2.0 · 自动刷新 15 秒</span>
           </footer>
         </div>
       </main>

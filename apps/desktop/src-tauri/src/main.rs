@@ -6,13 +6,33 @@ use std::{fs, time::Duration, sync::{Mutex,OnceLock}};
 struct Session { endpoint: Option<String>, token: Option<String>, profile: Option<Value>, token_origin: Option<String>, generation: u64 }
 fn session() -> &'static Mutex<Session> { static STATE: OnceLock<Mutex<Session>>=OnceLock::new(); STATE.get_or_init(||Mutex::new(Session::default())) }
 fn allowed_request(path:&str, method:&str)->bool {
- if !matches!(method,"GET"|"POST") || !path.starts_with("/v1/") || !path.chars().all(|c|c.is_ascii_alphanumeric()||"/_-?=&".contains(c)) {return false;}
- let route=path.trim_start_matches("/v1/");
- if route.starts_with("auth/") {return matches!((route,method),("auth/me","GET")|("auth/logout","POST"));}
- if route.starts_with("members") || route.starts_with("agents") {
-  return matches!((route,method),("members","GET")|("agents","GET")|("members/invite","POST")|("agents/pair/approve","POST")) || method=="POST" && [ ("members/","/disable"),("agents/","/revoke") ].iter().any(|(pre,suf)| route.strip_prefix(pre).and_then(|v|v.strip_suffix(suf)).is_some_and(|id|!id.is_empty() && !id.contains('/') && !id.contains('?')));
+ if !matches!(method,"GET"|"POST") || path.len()>4096 {return false;}
+ let mut parts=path.split('?'); let pathname=parts.next().unwrap_or(""); let query=parts.next();
+ if parts.next().is_some() || !pathname.starts_with("/v1/") || pathname.contains("//") || !pathname.chars().all(|c|c.is_ascii_alphanumeric()||"/_-".contains(c)) {return false;}
+ if let Some(q)=query {
+  if method!="GET" || q.is_empty(){return false;}
+  for pair in q.split('&') {
+   let Some((key,value))=pair.split_once('=') else{return false;};
+   if key.is_empty() || !key.chars().all(|c|c.is_ascii_lowercase()||c=='_') || !value.chars().all(|c|c.is_ascii_alphanumeric()||"_%+.-".contains(c)) {return false;}
+   let bytes=value.as_bytes();let mut decoded=Vec::new();let mut i=0;
+   while i<bytes.len() {if bytes[i]==b'%' {if i+2>=bytes.len(){return false;}let Some(hi)=(bytes[i+1] as char).to_digit(16) else{return false;};let Some(lo)=(bytes[i+2] as char).to_digit(16) else{return false;};decoded.push((hi*16+lo) as u8);i+=3;}else{decoded.push(bytes[i]);i+=1;}}
+   let Ok(text)=String::from_utf8(decoded) else{return false;};if text.chars().any(|c|c.is_control()){return false;}
+  }
  }
- matches!(route.split(['/', '?']).next().unwrap_or(""),"health"|"me"|"workspaces"|"projects"|"experiments"|"activity"|"commands"|"batches")
+ let route=pathname.trim_start_matches("/v1/");
+ if route.starts_with("auth/") {return query.is_none() && matches!((route,method),("auth/me","GET")|("auth/logout","POST"));}
+ if route.starts_with("members") || route.starts_with("agents") {
+  return query.is_none() && (matches!((route,method),("members","GET")|("agents","GET")|("members/invite","POST")|("agents/pair/approve","POST")) || method=="POST" && [ ("members/","/disable"),("agents/","/revoke") ].iter().any(|(pre,suf)| route.strip_prefix(pre).and_then(|v|v.strip_suffix(suf)).is_some_and(|id|!id.is_empty() && !id.contains('/'))));
+ }
+ let segments:Vec<_>=route.split('/').collect();let id_ok=|id:&str|!id.is_empty()&&id.chars().all(|c|c.is_ascii_alphanumeric()||"_-".contains(c));
+ match (method,segments.as_slice()) {
+  ("GET",["me"|"health"|"workspaces"|"tags"|"activity"|"projects"|"experiments"])=>true,
+  ("GET",["projects"|"experiments",id])=>id_ok(id),
+  ("GET",["projects",id,"retrospectives"|"comments"])=>id_ok(id),
+  ("POST",["commands"])=>true,
+  ("POST",["batches",id,"preview"|"undo"])=>id_ok(id),
+  _=>false,
+ }
 }
 fn trusted_origin(raw:&str)->Result<String,String> {
  let url=reqwest::Url::parse(raw).map_err(|_|"服务地址格式不正确。")?;
@@ -86,7 +106,8 @@ fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![conn
  #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}
  #[test]
  #[ignore = "requires explicitly configured local development API and credential file"]
- fn native_bridge_reads_real_local_api_without_exposing_tokens(){let profiles=local_profiles().expect("local profiles available"); assert_eq!(profiles.len(),3); let public=serde_json::to_value(&profiles).unwrap();assert!(public.as_array().unwrap().iter().all(|p|p.get("token").is_none()));let me=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/me".into(),"GET".into(),None)).unwrap();assert_eq!(me["data"]["kind"],"human");}
+ fn native_bridge_reads_real_local_api_without_exposing_tokens(){let profiles=local_profiles().expect("local profiles available"); assert_eq!(profiles.len(),3); let public=serde_json::to_value(&profiles).unwrap();assert!(public.as_array().unwrap().iter().all(|p|p.get("token").is_none()));let me=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/me".into(),"GET".into(),None)).unwrap();assert_eq!(me["data"]["kind"],"human");let workspaces=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/workspaces".into(),"GET".into(),None)).unwrap();let workspace=workspaces["data"][0]["id"].as_str().unwrap();let tags=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),format!("/v1/tags?workspace_id={}&q=%E6%B8%B8%E6%88%8F",workspace),"GET".into(),None)).unwrap();assert!(tags["data"].is_array());}
+ #[test] fn library_queries_allow_encoding_only_in_values(){assert!(allowed_request("/v1/tags?workspace_id=abc-123&q=%E6%B8%B8%E6%88%8F","GET"));assert!(allowed_request("/v1/projects?tag=Game%20Art","GET"));for p in ["/v1/tags?q=%ZZ","/v1/tags?q=%00","/v1/projects%2f..%2fsecret","/v1/projects/a/unknown"] {assert!(!allowed_request(p,"GET"));}assert!(!allowed_request("/v1/tags","POST"));}
  #[test] fn auth_routes_are_precise(){assert!(allowed_request("/v1/auth/me","GET"));assert!(allowed_request("/v1/agents/pair/approve","POST"));assert!(!allowed_request("/v1/auth/login","GET"));assert!(!allowed_request("/v1/members/invite","GET"));assert!(!allowed_request("/v1/agents/a/revoke/extra","POST"));assert!(!allowed_request("/v1/auth/pair/poll","POST"));assert!(!allowed_request("/v1/../admin","GET"));}
  #[test] fn endpoint_rejects_credentials_paths_and_insecure_urls(){assert_eq!(trusted_origin("https://example.com/").unwrap(),"https://example.com");for value in ["http://example.com","https://user:pass@example.com","https://example.com/v1","https://example.com?secret=x","file:///secret"] {assert!(trusted_origin(value).is_err());}}
  #[test] fn only_allows_graybox_api_routes_and_safe_methods(){assert!(allowed_request("/v1/projects","GET"));assert!(allowed_request("/v1/experiments?project_id=abcd-1234","GET"));assert!(allowed_request("/v1/commands","POST"));assert!(!allowed_request("https://example.com","GET"));assert!(!allowed_request("/v1/commands","DELETE"));assert!(!allowed_request("/v1/projects%2f..%2fsecret","GET"));}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Graybox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "dev.graybox.desktop",
   "build": {
     "beforeDevCommand": "pnpm run dev:web",
@@ -9,8 +9,8 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{"label":"main","title":"Graybox · 研发记忆","width":1320,"height":900,"minWidth":800,"minHeight":620}],
+    "windows": [{"label":"main","title":"Graybox · 团队创意与经验","width":1320,"height":900,"minWidth":800,"minHeight":620}],
     "security": {"csp":"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'"}
   },
-  "bundle": {"active":true,"targets":["nsis"],"shortDescription":"团队研发实验记录","category":"DeveloperTool","windows":{"webviewInstallMode":{"type":"skip"}}}
+  "bundle": {"active":true,"targets":["nsis"],"shortDescription":"团队创意与项目经验库","category":"DeveloperTool","windows":{"webviewInstallMode":{"type":"skip"}}}
 }
