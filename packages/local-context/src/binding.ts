@@ -127,7 +127,7 @@ export async function executeCommand(options:ContextOptions,body:unknown){
   const parsed=commandSchema.safeParse(body);if(!parsed.success)fail('VALIDATION','Command violates shared contract; explicit stable UUID keys and revisions are required');const command=parsed.data,ctx=await resolveContext(options);
   if(command.type==='project_create'){if(command.payload.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Command targets another workspace');}
   else if(command.type==='project_update'){if(command.payload.id!==ctx.project.id)fail('PROJECT_MISMATCH','Command targets another project');}
-  else if(command.type==='experiment_create'){if(command.payload.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Command targets another project');}
+  else if(command.type==='experiment_create'||command.type==='retrospective_create'||command.type==='comment_create'){if(command.payload.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Command targets another project');}
   else{const experiment=await ctx.api.experiment(command.type==='experiment_update'?command.payload.id:command.payload.experiment_id);if(experiment.project_id!==ctx.project.id)fail('EXPERIMENT_MISMATCH','Command targets another project experiment');}
   return ctx.api.command(command);
 }

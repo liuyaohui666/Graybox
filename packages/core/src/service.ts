@@ -11,7 +11,7 @@ function canonical(value:unknown):string {
 }
 const digest=(v:unknown)=>createHash('sha256').update(canonical(v)).digest('hex');
 const normalize=<T>(v:T):T=>JSON.parse(JSON.stringify(v)) as T;
-const tables={project:'projects',experiment:'experiments',series:'experiment_series',evidence:'evidence',submission:'submissions'} as const;
+const tables={project:'projects',experiment:'experiments',series:'experiment_series',evidence:'evidence',submission:'submissions',retrospective:'retrospectives',comment:'comments'} as const;
 type EntityType=keyof typeof tables;
 type Change={entity_type:EntityType;entity_id:string;project_id:string;before:Entity|null;after:Entity;expected_revision:number};
 export class Service {
@@ -57,7 +57,7 @@ export class Service {
     const scopeColumn=type==='project'?'id':'project_id';
     const row=(await c.query(`SELECT * FROM graybox.${tables[type]} WHERE id=$1 ${scoped?`AND ${scopeColumn}=ANY($2::uuid[])`:''} ${lock && type!=='evidence' && type!=='submission'?'FOR UPDATE':''}`,scoped?[id,p.project_ids]:[id])).rows[0];
     if(!row || row.deleted_at) return fail('NOT_FOUND','Entity not found',404);
-    if(type==='project' || type==='experiment') { const {data,...base}=row; return normalize({...base,...data}) as Entity; }
+    if(type==='project' || type==='experiment') { const {data,...base}=row; const entity=normalize({...base,...data}) as Entity; return type==='project' && p ? this.presentProject(c,p,entity) : entity; }
     if(type==='evidence'||type==='submission') {
       if((await c.query('SELECT id FROM graybox.tombstones WHERE entity_type=$1 AND entity_id=$2',[type,id])).rowCount) return fail('NOT_FOUND','Entity not found',404);
       return normalize({...row,revision:1}) as Entity;
@@ -70,11 +70,46 @@ export class Service {
     const e=await this.entity(this.pool,'experiment',id,false,p);
     const evidence=await this.children(this.pool,'evidence',id),submissions=await this.children(this.pool,'submissions',id);return {...e,evidence,submissions};
   }
-  async list(p:Principal,type:'projects'|'experiments',project_id?:string) {
+  private async canEdit(c:Pool|PoolClient,p:Principal,project:Entity) {
+    return project.creator_id===p.human_id || (await c.query('SELECT role FROM graybox.users WHERE id=$1',[p.human_id])).rows[0]?.role==='owner';
+  }
+  private async editable(c:Pool|PoolClient,p:Principal,project:Entity) {
+    if(!await this.canEdit(c,p,project)) fail('FORBIDDEN','Only the project creator or owner may edit this project',403);
+  }
+  private async presentProject(c:Pool|PoolClient,p:Principal,project:Entity):Promise<Entity> {
+    const creator=project.creator_id?(await c.query('SELECT name FROM graybox.users WHERE id=$1',[project.creator_id])).rows[0]:null;
+    return {...project,creator_name:creator?.name??null,can_edit:await this.canEdit(c,p,project)};
+  }
+  private async projectData(c:PoolClient,workspace:string,data:Record<string,unknown>) {
+    const names:string[]=[];
+    for(const raw of (data.tags??[]) as string[]) {
+      const name=raw.trim().replace(/\s+/g,' '),key=name.toLowerCase();
+      const existing=(await c.query('SELECT name FROM graybox.tags WHERE workspace_id=$1 AND normalized_name=$2',[workspace,key])).rows[0];
+      const canonicalName=existing?.name??name;
+      if(!existing)await c.query('INSERT INTO graybox.tags(id,workspace_id,name,normalized_name) VALUES($1,$2,$3,$4)',[randomUUID(),workspace,name,key]);
+      if(!names.includes(canonicalName))names.push(canonicalName);
+    }
+    return {...data,tags:names};
+  }
+  async list(p:Principal,type:'projects'|'experiments',project_id?:string,tag?:string) {
     p=await this.currentPrincipal(this.pool,p.id);
     if(project_id) this.scope(p,project_id);
-    const rows=(await this.pool.query(`SELECT * FROM graybox.${type} WHERE deleted_at IS NULL ${type==='experiments'&&project_id?'AND project_id=$1':''} ORDER BY created_at,id`,type==='experiments'&&project_id?[project_id]:[])).rows;
-    return rows.filter(row=>p.project_ids===null || p.project_ids.includes(type==='projects'?row.id:row.project_id)).map(row=>normalize({...Object.fromEntries(Object.entries(row).filter(([k])=>k!=='data')),...row.data}));
+    const rows=(await this.pool.query(`SELECT * FROM graybox.${type} WHERE deleted_at IS NULL ${type==='experiments'&&project_id?'AND project_id=$1':''} ORDER BY ${type==='projects'?"CASE data->>'priority' WHEN 'high' THEN 0 WHEN 'low' THEN 2 ELSE 1 END,":''}created_at,id`,type==='experiments'&&project_id?[project_id]:[])).rows;
+    const visible=rows.filter(row=>p.project_ids===null || p.project_ids.includes(type==='projects'?row.id:row.project_id)).map(row=>normalize({...Object.fromEntries(Object.entries(row).filter(([k])=>k!=='data')),...row.data}) as Entity);
+    const key=tag?.trim().replace(/\s+/g,' ').toLowerCase();
+    return Promise.all(visible.filter(row=>!key || ((row.tags??[]) as string[]).some(t=>t.toLowerCase()===key)).map(row=>type==='projects'?this.presentProject(this.pool,p,row):row));
+  }
+  async tags(p:Principal,workspace?:string,q?:string) {
+    p=await this.currentPrincipal(this.pool,p.id);
+    const rows=(await this.pool.query('SELECT id,workspace_id,name FROM graybox.tags WHERE ($1::uuid IS NULL OR workspace_id=$1) ORDER BY normalized_name,id',[workspace??null])).rows;
+    const key=q?.trim().replace(/\s+/g,' ').toLowerCase();
+    // Scoped agents only see tags already associated with accessible projects.
+    const projects=p.project_ids===null?null:await this.list(p,'projects');
+    return rows.filter(row=>(!key || row.name.toLowerCase().includes(key)) && (!projects || projects.some(pr=>pr.workspace_id===row.workspace_id && ((pr.tags??[]) as string[]).includes(row.name))));
+  }
+  async projectChildren(p:Principal,id:string,table:'retrospectives'|'comments') {
+    p=await this.currentPrincipal(this.pool,p.id);await this.entity(this.pool,'project',id,false,p);
+    return normalize((await this.pool.query(`SELECT x.*,u.name AS author_name FROM graybox.${table} x JOIN graybox.users u ON u.id=x.author_id WHERE project_id=$1 ORDER BY x.created_at,x.id`,[id])).rows.map(({data,...row})=>({...row,...data})));
   }
   async activity(p:Principal,entity_id?:string,batch_id?:string) {
     p=await this.currentPrincipal(this.pool,p.id);
@@ -102,8 +137,10 @@ export class Service {
     const {data:business,...base}=after;return normalize({...base,...business}) as Entity;
   }
   private business(entity:Entity,type:'project'|'experiment') {
-    const fields=type==='project'?['name','description','status','repo_url']:['name','goal','summary','change_summary','status','based_on'];
-    return Object.fromEntries(fields.filter(k=>entity[k]!==undefined).map(k=>[k,entity[k]]));
+    const fields=type==='project'?['name','description','status','repo_url','lifecycle','priority','tags']:['name','goal','summary','change_summary','status','based_on'];
+    const data=Object.fromEntries(fields.filter(k=>entity[k]!==undefined).map(k=>[k,entity[k]]));
+    if(type==='project') return {lifecycle:entity.status==='paused'?'paused':entity.status==='archived'?'completed':'in_progress',priority:'medium',tags:[],...data};
+    return data;
   }
   async command(p:Principal,input:unknown) {
     const parsed=commandSchema.safeParse(input); if(!parsed.success) return fail('VALIDATION','Invalid command shape or fields',400);
@@ -116,11 +153,29 @@ export class Service {
         if(p.project_ids!==null) fail('FORBIDDEN','Restricted credentials cannot create projects',403);
         if(!(await c.query('SELECT id FROM graybox.workspaces WHERE id=$1',[payload.workspace_id])).rowCount) fail('NOT_FOUND','Workspace not found',404);
         const id=randomUUID(); const {workspace_id,...data}=payload;
-        await c.query('INSERT INTO graybox.projects(id,workspace_id,revision,data) VALUES($1,$2,1,$3)',[id,workspace_id,{description:'',status:'active',...data}]);
-        result=await this.entity(c,'project',id); await this.record(c,p,batch_id,type,'project',null,result,session_id);
+        const lifecycle=data.lifecycle??(data.status==='paused'?'paused':data.status==='archived'?'completed':data.status==='active'?'in_progress':'todo');
+        const business=await this.projectData(c,workspace_id,{description:'',priority:'medium',...data,lifecycle,status:lifecycle==='paused'?'paused':lifecycle==='completed'?'archived':'active'});
+        await c.query('INSERT INTO graybox.projects(id,workspace_id,revision,data,creator_id) VALUES($1,$2,1,$3,$4)',[id,workspace_id,business,p.human_id]);
+        result=await this.entity(c,'project',id,false,p); await this.record(c,p,batch_id,type,'project',null,result,session_id);
       } else if(type==='project_update') {
-        this.scope(p,payload.id); const before=await this.entity(c,'project',payload.id,true);this.revision(before,command.expected_revision);
-        const {id,...fields}=payload;result=await this.save(c,'project',before,{...this.business(before,'project'),...fields});await this.record(c,p,batch_id,type,'project',before,result,session_id);
+        this.scope(p,payload.id); const before=await this.entity(c,'project',payload.id,true);await this.editable(c,p,before);this.revision(before,command.expected_revision);
+        const {id,...rawFields}=payload;
+        const fields=rawFields as Record<string,unknown>;
+        const lifecycle=fields.lifecycle??(fields.status?(fields.status==='paused'?'paused':fields.status==='archived'?'completed':'in_progress'):before.lifecycle);
+        const data=await this.projectData(c,String(before.workspace_id),{...this.business(before,'project'),...fields,lifecycle,status:lifecycle==='paused'?'paused':lifecycle==='completed'?'archived':'active'});
+        result=await this.presentProject(c,p,await this.save(c,'project',before,data));await this.record(c,p,batch_id,type,'project',before,result,session_id);
+      } else if(type==='retrospective_create' || type==='comment_create') {
+        const before=await this.entity(c,'project',payload.project_id,true,p);
+        if(type==='retrospective_create')await this.editable(c,p,before);
+        this.revision(before,command.expected_revision);
+        const id=randomUUID(),{project_id,...data}=payload;
+        const table=type==='comment_create'?'comments':'retrospectives';
+        const child=(await c.query(`INSERT INTO graybox.${table}(id,project_id,batch_id,author_id,agent_id,${type==='comment_create'?'body':'data'}) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[id,project_id,batch_id,p.human_id,p.agent_id,type==='comment_create'?(data as {body:string}).body:data])).rows[0];
+        const parent=await this.save(c,'project',before,this.business(before,'project'));
+        const author=(await c.query('SELECT name FROM graybox.users WHERE id=$1',[p.human_id])).rows[0];
+        result=normalize({...Object.fromEntries(Object.entries(child).filter(([k])=>k!=='data')),...child.data,revision:1,author_name:author.name,project_revision:parent.revision}) as Entity;
+        await this.record(c,p,batch_id,type,type==='comment_create'?'comment':'retrospective',null,result,session_id);
+        await this.record(c,p,batch_id,type,'project',before,parent,session_id);
       } else if(type==='experiment_create') {
         this.scope(p,payload.project_id);await this.entity(c,'project',payload.project_id,true);
         let seriesId=payload.series_id;
@@ -166,6 +221,7 @@ export class Service {
     if(batch.credential_id!==p.id) fail('FORBIDDEN','Only batch credential owner may undo',403);
     if(batch.undone_at || Date.now()-new Date(batch.created_at).getTime()>30*24*60*60*1000) fail('UNDO_UNAVAILABLE','Batch already undone or beyond 30 days');
     const rows=(await c.query('SELECT * FROM graybox.activities WHERE batch_id=$1 ORDER BY created_at,id',[batchId])).rows;
+    if(rows.some(a=>['comment','retrospective'].includes(a.entity_type))) fail('UNDO_UNAVAILABLE','This batch contains immutable comments or retrospectives; create a correction comment or a new retrospective instead');
     const changes=new Map<string,Change>();
     for(const a of rows) {
       this.scope(p,a.project_id);const key=`${a.entity_type}:${a.entity_id}`;const previous=changes.get(key);
@@ -180,6 +236,7 @@ export class Service {
       if(later.rowCount) fail('UNDO_CONFLICT','Another batch mutated this entity after the batch baseline');
       if(!change.before) {
         const checks: Array<[string,string,unknown[]]>=[];
+        if(change.entity_type==='project' && (await c.query('SELECT id FROM graybox.comments WHERE project_id=$1 UNION ALL SELECT id FROM graybox.retrospectives WHERE project_id=$1',[change.entity_id])).rowCount) fail('UNDO_DEPENDENCY','Project has immutable comments or retrospectives; preserve the project');
         if(change.entity_type==='project') checks.push(['experiments','project_id',[change.entity_id]],['experiment_series','project_id',[change.entity_id]]);
         if(change.entity_type==='series') checks.push(['experiments','series_id',[change.entity_id]]);
         if(change.entity_type==='experiment') {

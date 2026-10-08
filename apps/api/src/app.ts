@@ -44,7 +44,9 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
   app.get('/v1/health',async()=>({data:await service.health()}));
   app.get('/v1/me',async request=> {const p=principal(request);return {data:{credential_id:p.id,human_id:p.human_id,agent_id:p.agent_id,kind:p.kind,project_ids:p.project_ids}};});
   app.get('/v1/workspaces',async()=>({data:await service.workspaces()}));
-  app.get('/v1/projects',async request=>({data:await service.list(principal(request),'projects')}));
+  app.get<{Querystring:{tag?:string}}>('/v1/projects',async request=>({data:await service.list(principal(request),'projects',undefined,request.query.tag)}));
+  app.get<{Querystring:{workspace_id?:string;q?:string}}>('/v1/tags',async request=>({data:await service.tags(principal(request),request.query.workspace_id?id(request.query.workspace_id):undefined,request.query.q)}));
+  for(const table of ['retrospectives','comments'] as const) app.get<{Params:{id:string}}>(`/v1/projects/:id/${table}`,async request=>({data:await service.projectChildren(principal(request),id(request.params.id),table)}));
   app.get<{Params:{id:string}}>('/v1/projects/:id',async request=>({data:await service.getProject(principal(request),id(request.params.id))}));
   app.get<{Querystring:{project_id?:string}}>('/v1/experiments',async request=>({data:await service.list(principal(request),'experiments',request.query.project_id? id(request.query.project_id):undefined)}));
   app.get<{Params:{id:string}}>('/v1/experiments/:id',async request=>({data:await service.getExperiment(principal(request),id(request.params.id))}));
