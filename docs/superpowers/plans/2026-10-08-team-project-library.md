@@ -58,3 +58,5 @@ Create an idea with high priority and two tags; another identity finds it by exi
 
 ## Extension: roles and avatars (2026-10-08)
 User requested compact owner/member naming and personal avatars, with avatar-only attribution suitable for the three-person team. Implement before this release: additive avatar storage, own-human upload/reset, bounded raster validation, default avatars, accessible compact attribution across activity/projects/reports/comments/members; preserve IDs, existing names/data and Agent indicators. Reuse existing authenticated APIs, database and browser raster decoding; no storage provider or new dependency. Brief: .superpowers/sdd/project-library/task-4-brief.md.
+
+Final interaction follow-up: user confirmed the native window is visible and requested clicking the avatar itself to reveal replace/reset options, without a permanent personal-avatar text label. Implemented with keyboard/outside-click closing; narrow390px avatar visibility and menu fit verified. Focused12 tests/typecheck passed; independent follow-up review approved.

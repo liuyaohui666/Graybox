@@ -351,7 +351,7 @@ function App() {
           <p>每一份结论，都能回到当时的实验与证据。</p>
         </div>
         <div className="profile">
-          <Attribution id={profile} name={activeProfile?.name}/>
+          <AvatarEditor profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
           <label>
             当前身份
             <select
@@ -368,7 +368,6 @@ function App() {
             </select>
           </label>
         </div>
-        <AvatarEditor profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
       </aside>
       <main>
         <header className="topbar">

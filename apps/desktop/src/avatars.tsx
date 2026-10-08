@@ -21,8 +21,9 @@ export function Attribution({id,name,agentId,detail=false}:{id?:string|null;name
 }
 export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
  const {people,mode,refresh}=useContext(PeopleContext),guard=useRef(new AvatarGeneration()),active=useRef(profile),writing=useRef(false),[message,setMessage]=useState('');active.current=profile;
- const current=people.find(p=>p.id===profile)??person;
- useEffect(()=>{guard.current.cancel();setMessage('');return()=>guard.current.cancel();},[profile]);
+ const current=people.find(p=>p.id===profile)??person,input=useRef<HTMLInputElement>(null),menu=useRef<HTMLDetailsElement>(null);
+ useEffect(()=>{guard.current.cancel();setMessage('');if(menu.current)menu.current.open=false;return()=>guard.current.cancel();},[profile]);
+ useEffect(()=>{const close=(event:PointerEvent)=>{if(menu.current&&!menu.current.contains(event.target as Node))menu.current.open=false;};document.addEventListener('pointerdown',close);return()=>document.removeEventListener('pointerdown',close);},[]);
  async function save(file:File|null) {
   if(!profile||locked||writing.current)return;writing.current=true;setBusy(true);setMessage('');
   const token=guard.current.begin(profile,sessionGeneration());
@@ -34,5 +35,5 @@ export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;per
   }catch(e){if(guard.current.current(token,active.current,sessionGeneration()))setMessage((e as Error).message);}
   finally{writing.current=false;setBusy(false);}
  }
- return <details className="avatar-editor"><summary>个人头像</summary><div className="profile-preview"><Avatar person={current} mode={mode}/><span>{current?personLabel(current,mode):'当前身份'}</span></div><label>更换头像<input type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/></label><p className="muted">图片会居中裁剪为方形头像。</p><button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>{message&&<p role="status">{message}</p>}</details>;
+ return <details ref={menu} className="avatar-editor" onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;menu.current.querySelector('summary')?.focus();}}}><summary role="button" aria-label="头像选项" title="更换头像"><Avatar person={current} mode={mode}/></summary><div className="avatar-menu"><button type="button" disabled={locked} onClick={()=>input.current?.click()}>更换头像</button><input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/><button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>{message&&<p role="status">{message}</p>}</div></details>;
 }
