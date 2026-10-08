@@ -12,6 +12,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
+import { navigationBlocked } from "./library-write-guard.ts";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 
@@ -41,6 +42,7 @@ function App() {
   const [people, setPeople] = useState<Profile[]>([]),
     [profile, setProfile] = useState("");
   const [createdProject, setCreatedProject] = useState("");
+  const [libraryTag,setLibraryTag]=useState("");
   const refreshSequence = useRef(0), mutationLock = useRef(false);
   const [page, setPage] = useState<Page>("home"),
     [projects, setProjects] = useState<Project[]>([]),
@@ -64,11 +66,13 @@ function App() {
     selection = useRef("");
   const pending = useRef(commandRetry);
   const activeProfile = people.find((p) => p.id === profile);
-  function navigate(next: Page) {
+  function navigate(next: Page, completedWrite=false) {
+    if (!completedWrite && navigationBlocked(busy,mutationLock.current,writeSafety.snapshot())) return false;
     setCreatedProject("");
     selection.current = "";
     setDetail(null);
     setPage(next);
+    return true;
   }
   async function refresh(id = profile) {
     if (!id) return;
@@ -108,6 +112,7 @@ function App() {
     setUndo(null);
     setProjectFilter("");
     setCreatedProject("");
+    setLibraryTag("");
     setWorkspaces([]);
     setProjects([]);
     setExperiments([]);
@@ -172,7 +177,7 @@ function App() {
     setNotice("");
     try {
       const result = await send(type, payload, revision);
-      if (type === "project_create") { navigate("projects"); setCreatedProject(result.id); }
+      if (type === "project_create") { navigate("projects",true); setCreatedProject(result.id); }
       setDialog(null);
       setNotice(
         type === "review_submit"
@@ -459,7 +464,7 @@ function App() {
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
-                {(page === "home" || page === "projects") && <ProjectLibrary profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} openExperiment={(id) => {navigate("experiments"); void showExperiment(id);}} />}
+                {(page === "home" || page === "projects") && <ProjectLibrary profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={(tag)=>{if(navigate("projects"))setLibraryTag(tag);}} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
                 {page === "experiments" && (
                   <div className="filters">
                     <input

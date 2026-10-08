@@ -32,3 +32,16 @@ Vite and native route validators now separate pathname and query validation. GET
 ## Boundaries
 
 Parent performs real browser interaction acceptance and independent review. This task's component tests verify static initial entry rendering, not interactive browser behavior. Native bridge exercised the live API, but a packaged Tauri client has not been launched or visually accepted. No production deployment or reset of the main database. Current recent-report view reads reports per project; it is appropriate for the existing small team and should later use a bounded server feed if the backlog becomes large.
+
+## Independent review fixes (2026-10-08)
+
+Addressed all four findings in task-2-review.md. Legacy experiment controls and navigation handlers now synchronously block exits during active or unresolved writes. Metadata, report, custom-section and comment controls freeze while busy or ambiguous; discard is also blocked. The original payload is cloned and retained independently of disabled form controls, so the matching submit button remains enabled after an ambiguous failure and retries the exact saved payload/revision. Successful or definitive rejection releases the snapshot. Tag filter state now belongs to App and detail-tag callbacks navigate to projects; the filter survives library remount and no longer depends on local setState ordering. Fieldset wrappers preserve existing form spacing without a redesign.
+
+TDD/validation commands run from graybox:
+- `node_modules/.bin/vitest.cmd run tests/unit/library-write-guard.test.ts`: red, missing guard helper import before implementation.
+- `node_modules/.bin/vitest.cmd run tests/unit/library-write-guard.test.ts tests/unit/project-library-model.test.ts tests/unit/project-library-render.test.ts tests/unit/desktop-retry.test.ts`: green, 4 files / 12 tests (before final snapshot mutation test).
+- `node_modules/.bin/tsc.cmd --noEmit`: passed after final changes.
+- `node_modules/.bin/vitest.cmd run tests/unit`: passed after final changes, 7 files / 49 tests. New tests cover synchronous navigation exclusion, unresolved navigation, saved payload/revision retry despite missing disabled form fields, independent custom-section snapshot and definitive rejection release.
+- `node_modules/.bin/vite.cmd build --config apps/desktop/vite.config.ts`: passed after final changes, 25 modules; index-DvROPcwt.js 264.12 kB (gzip 81.92 kB).
+
+Unit tests verify guard/retry logic and initial component rendering. Parent performs actual browser interaction and delayed/ambiguous recovery acceptance after this commit. No backend/database changes or browser-created project edits by this worker.
