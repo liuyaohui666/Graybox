@@ -27,5 +27,6 @@ await rm(ops,{recursive:true,force:true});
 await cp(resolve(root,'ops/cloud'),ops,{recursive:true,filter:source=>!source.includes('__pycache__')&&!source.endsWith('.pyc')});
 const backupScript=resolve(ops,'backup.sh');
 await writeFile(backupScript,(await readFile(backupScript,'utf8')).replace(/\r\n/g,'\n'));
-await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',mode:'cloud',built_at:new Date().toISOString(),node:'24.18.0'},null,2)+'\n');
+const version=JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
+await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',version,mode:'cloud',built_at:new Date().toISOString(),node:'24.18.0'},null,2)+'\n');
 console.log(out);
