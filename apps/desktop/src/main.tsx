@@ -539,6 +539,8 @@ function App() {
                             {(
                               {
                                 project_create: "新建项目",
+                                retrospective_create: "添加经验报告",
+                                comment_create: "添加讨论",
                                 project_update: "更新项目",
                                 experiment_create: "新建实验",
                                 experiment_update: "更新实验",
