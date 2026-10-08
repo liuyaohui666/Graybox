@@ -1,4 +1,4 @@
-param([switch]$SkipShortcuts)
+param([switch]$SkipShortcuts,[switch]$IncludeLocal)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $output=[IO.Path]::GetFullPath((Join-Path $repo '../outputs'))
@@ -9,7 +9,8 @@ $bytes=[IO.File]::ReadAllBytes($source)
 $pe=[BitConverter]::ToInt32($bytes,0x3c)
 if ([BitConverter]::ToUInt16($bytes,$pe+24+68) -ne 2) { throw 'Expected a Windows GUI executable.' }
 $shell=New-Object -ComObject WScript.Shell
-foreach ($mode in @('cloud','local')) {
+$modes=if ($IncludeLocal) { @('cloud','local') } else { @('cloud') }
+foreach ($mode in $modes) {
   $folder=Join-Path $output ('Graybox-'+$mode)
   if (-not (Test-Path -LiteralPath $folder)) { throw "Missing delivery folder: $folder" }
   # Do not replace the old binary while the user may have an unsaved draft open.

@@ -1,5 +1,7 @@
 # Silent desktop launch — 2026-10-08
 
+Follow-up: at the user's request, the local delivery folder and its desktop shortcut were moved to the Recycle Bin, and only the owned local API and isolated PostgreSQL cluster were stopped. Local database files and source remain for recovery/development. The installer now defaults to cloud only; local launcher creation requires explicit `-IncludeLocal` and an existing local delivery folder.
+
 The delivered shortcuts targeted batch files, and the native debug binary used the console subsystem. Both could display a command window.
 
 The application now uses the Windows GUI subsystem for non-test builds, including the current debug delivery. `scripts/install-desktop-launchers.ps1` validates that PE subsystem, stages a separately named executable without replacing the user's running old process, and creates Windows Script Host entrypoints and desktop shortcuts.
