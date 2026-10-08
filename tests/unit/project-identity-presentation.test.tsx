@@ -15,11 +15,11 @@ test('sidebar keeps the avatar menu and nickname without persistent identity sel
  expect(html).toContain('本地用户1');expect(html).toContain('头像选项');expect(html).toContain('更换头像');expect(html).toContain('恢复默认头像');
  expect(html).not.toContain('<select');expect(html).not.toContain('owner');expect(html).not.toContain('当前身份');
 });
-test('same account sees its actual role per project and named owner in project cards',()=>{
+test('project rows identify their owner without repeating the viewer role',()=>{
  const base={description:'',lifecycle:'todo',priority:'medium',tags:[],workspace_id:'w',revision:1,status:'active',updated_at:'2026-10-08'};
  const projects=[{...base,id:'a',name:'A project',creator_name:'江微雪',creator_id:'a',owner_name:'江微雪',owner_id:'a',project_role:'owner',can_edit:true},{...base,id:'b',name:'B project',creator_name:'朋友',creator_id:'b',owner_name:'朋友',owner_id:'b',project_role:'member',can_edit:false}] as Project[];
  const html=renderToStaticMarkup(<ProjectLibrary profile="a" page="projects" projects={projects} experiments={[]} createdId="" busy={false} setBusy={()=>{}} send={async()=>{}} refresh={async()=>{}} openExperiment={()=>{}}/>);
- expect(html).toContain('项目 owner');expect(html).toContain('你在此项目：owner');expect(html).toContain('你在此项目：member');
+ expect(html.match(/title="项目 owner"/g)).toHaveLength(2);expect(html).not.toContain('你在此项目');
  expect(html).toContain('江微雪');expect(html).toContain('朋友');expect(html).not.toContain('团队 owner');
 });
 test('legacy experiment UI gates writes and creation using project edit authority',()=>{

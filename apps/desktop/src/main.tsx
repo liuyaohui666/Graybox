@@ -12,6 +12,8 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
+import "./workbench.css";
+import {NavigationIcon} from "./navigation-icon.tsx";
 import {Attribution,PeopleProvider,SidebarAccount} from "./avatars.tsx";
 import { LibraryNavigation, LatestProfileRefresh } from "./library-app-state.ts";
 import {TeamSpace,MemberPage} from "./team-space.tsx";
@@ -327,15 +329,15 @@ function App() {
     <PeopleProvider profile={profile} mode={mode}><SocialProvider profile={profile} setBusy={setBusy}><div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brandmark">▧</span>
+          <span className="brandmark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="15" height="15" rx="2"/><path d="M8 21h13V8"/></svg></span>
           <div>
-            Graybox<small>团队创意与经验</small>
+            Graybox
           </div>
         </div>
         <div className="workspace">
           <span className="workspace-icon">G</span>
           <div>
-            {mode === "cloud" ? "团队研发空间" : "本地研发空间"}<small>{workspaces[0]?.name ?? "连接中"}</small>
+            团队空间<small>{mode === "cloud" ? "云端协作" : "本地工作台"}</small>
           </div>
           <span className="live-dot" />
         </div>
@@ -348,24 +350,23 @@ function App() {
               ["experiments", "◇", "实验"],
               ["activity", "≋", "活动记录"],
             ] as const
-          ).map(([id, icon, label]) => (
+          ).map(([id, , label]) => (
             <button
               key={id}
+              aria-label={label}
+              aria-current={page === id ? "page" : undefined}
               className={page === id ? "active" : ""}
               onClick={() => {
                 navigate(id);
                 setFilter("");
               }}
             >
-              <span>{icon}</span>
+              <span aria-hidden="true"><NavigationIcon name={id}/></span>
               {label}
             </button>
           ))}
         </nav>
-        <div className="sidebar-note">
-          <span>记录事实，留住判断。</span>
-          <p>每一份结论，都能回到当时的实验与证据。</p>
-        </div>
+
         <SidebarAccount profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
       </aside>
       <main>
@@ -387,48 +388,25 @@ function App() {
           <NotificationEntry locked={busy||!!pendingWrite} open={()=>navigate("messages")}/>
           <span className="local-status">
             <span className="live-dot" />
-            {mode === "cloud" ? "云端团队 · 数据保存在团队服务器" : "本地开发 · 数据保存在此电脑"}
+            {mode === "cloud" ? "云端" : "本地"}
           </span>
         </header>
         <div className="content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow">
-                {
-                  {
-                    home: "RESEARCH MEMORY",
-                    projects: "YOUR PROJECTS",
-                    experiments: "EXPERIMENT LOG",
-                    activity: "ACTIVITY TRAIL",
-                    member: "MEMBER HOME",
-                    messages: "YOUR INBOX",
-                  }[page]
-                }
-              </div>
               <h1>
                 {
                   {
-                    home: "团队创意与经验",
+                    home: "工作台",
                     projects: "项目",
                     experiments: "实验记录",
-                    activity: "谁在什么时候，改变了什么。",
+                    activity: "活动记录",
                     member: "成员主页",
                     messages: "我的消息",
                   }[page]
                 }
               </h1>
-              <p>
-                {
-                  {
-                    home: "先推进重要创意，再从项目经验继续。",
-                    projects: "一起积累创意、项目经验与讨论。",
-                    experiments: "保存不同版本，也保留当时的目标与判断。",
-                    activity: "变更与撤销都留在这里。",
-                    member: "查看成员的想法与主导项目。",
-                    messages: "来自团队的赞同与评论。",
-                  }[page]
-                }
-              </p>
+
             </div>
             <button
               className="primary"
@@ -739,10 +717,8 @@ function App() {
             </div>
           )}
           <footer className="footer">
-            <span>
-              GRAYBOX <b>·</b> 留下结果，也留下为什么。
-            </span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.0 · 自动刷新 15 秒</span>
+            <span>Graybox</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.1</span>
           </footer>
         </div>
       </main>
