@@ -1,9 +1,8 @@
 export function displayName(person:{name:string},mode:'local'|'cloud'):string {
- return mode==='local'?({'Owner demonstration':'owner','Member one demonstration':'member 1','Member two demonstration':'member 2'} as Record<string,string>)[person.name]??person.name:person.name;
+ return mode==='local'?({'Owner demonstration':'本地用户1','Member one demonstration':'本地用户2','Member two demonstration':'本地用户3'} as Record<string,string>)[person.name]??person.name:person.name;
 }
 export function personLabel(person:{name:string;role:string},mode:'local'|'cloud') {
- const name=displayName(person,mode),role=['owner','member'].includes(person.role)?person.role:'';
- return name+(role&&name!==role?' · '+role:'');
+ return displayName(person,mode);
 }
 export function avatarCrop(width:number,height:number) {
  if(width<=0||height<=0||width*height>40000000)throw Error('图片尺寸过大或无法读取。');

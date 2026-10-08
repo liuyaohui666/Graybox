@@ -32,3 +32,5 @@ node C:/工具/Graybox/runtime/client.mjs context --cwd C:/我的项目
 绑定只包含 UUID；个人 endpoint 和凭据永远来自外部个人配置。项目目录必须存在，已有不同绑定需要明确 `--replace`。报告/评论输入格式见 project-retrospective.md；执行 `retrospective create --cwd ... --input ...`，读取用 `retrospective list`、`comment list`、`tag list --q 关键词`。所有项目命令显式提供绝对 cwd。
 
 如需 MCP，将包中 config.toml.example 的绝对路径替换后，合并到用户明确选择的项目配置 `.codex/config.toml`。先保留其他已有配置；此示例不授权编辑全局设置。args 必须为 runtime/client.mjs、mcp、serve。MCP 仍为每次工具调用传显式 cwd，配对不替代项目绑定。
+
+账号角色与项目权限分开：创建者为项目 owner，其他人为 member；团队管理不能编辑别人的项目。项目 owner 可编辑元数据、实验/证据/验收与添加复盘，所有成员可阅读和评论。Agent 权限等于所属人类的项目权限与凭据范围的交集。创建者未知的历史项目未分配、只读。撤销还检查当前项目归属，已成功的原请求原键仅返回稳定收据。

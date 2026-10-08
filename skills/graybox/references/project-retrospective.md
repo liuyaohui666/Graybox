@@ -13,3 +13,5 @@ MCP retrospective_create 在同一信封顶层增加 cwd。comment_create 的 pa
 不确定是否提交成功时，以原始完整信封和原始键重试。REVISION_CONFLICT：读取最新项目和报告/评论，确认内容与意图后生成新的操作键；IDEMPOTENCY_MISMATCH：恢复原请求或明确作为新的操作，不能改旧键的正文。报告和评论不能 batch_undo，用 correction comment 或新复盘。
 
 更新 tags 前调用 tag_list / tag list，复用已有规范名称。project_update 的 tags 是完整关联集合，保留其他现有标签；不要仅传新增项而误删关联。
+
+账号角色与项目权限分开：创建者为项目 owner，其他人为 member；团队管理不能编辑别人的项目。项目 owner 可编辑元数据、实验/证据/验收与添加复盘，所有成员可阅读和评论。Agent 权限等于所属人类的项目权限与凭据范围的交集。创建者未知的历史项目未分配、只读。撤销还检查当前项目归属，已成功的原请求原键仅返回稳定收据。

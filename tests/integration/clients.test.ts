@@ -80,7 +80,12 @@ describe('real CLI and official MCP SDK → stdio → PostgreSQL API',()=>{
       const agentTransport=new StdioClientTransport({command:process.execPath,args:process.env.GRAYBOX_BUNDLED_CLIENT?[join(root,'.local/client-release/runtime/client.mjs'),'mcp','serve']:['--import','tsx',join(root,'apps/mcp/src/server.ts')],cwd:root,env:{...Object.fromEntries(Object.entries(process.env).filter((entry):entry is [string,string]=>typeof entry[1]==='string')),GRAYBOX_CLIENT_CONFIG:agentConfig},stderr:'pipe'}),agentClient=new Client({name:'graybox-agent-'+agent.id,version:'1.0.0'});
       agentTransport.stderr?.on('data',data=>{protocolDiagnostics+=String(data);});
       try{await agentClient.connect(agentTransport,{signal:testSignal,timeout:8000});const resolved=await tool('context_resolve',{},agentClient);expect(resolved.body.data.agent.agent_id).toBe(agent.id);
-        const create=command('experiment_create',{project_id:projectId,series_name:'Identity '+agent.id,name:'Identity provenance',goal:'Assert this distinct agent identity'}),result=await tool('experiment_create',create,agentClient);expect(result.isError).not.toBe(true);const row=(await admin.query('SELECT agent_id,human_id,credential_id FROM graybox.activities WHERE batch_id=$1',[create.batch_id])).rows[0];expect(row.agent_id).toBe(agent.id);expect(row.human_id).toBe(agent.human_id);
+        const agentApi=new ApiClient({endpoint:original.environments[0].endpoint,token:agent.token});
+        const ownProject=await agentApi.command(command('project_create',{workspace_id:fixture.workspace_id,name:'Agent project '+agent.id}));
+        const ownCwd=join(dir,'own-'+agent.id);await mkdir(join(ownCwd,'.graybox'),{recursive:true});
+        await writeFile(join(ownCwd,'.graybox/project.json'),JSON.stringify({version:1,environment_id:original.environments[0].environment_id,workspace_id:fixture.workspace_id,project_id:ownProject.id}));
+        const ownContext=await tool('context_resolve',{cwd:ownCwd},agentClient);expect(ownContext.body.data.project.project_role).toBe('owner');
+        const create=command('experiment_create',{project_id:ownProject.id,series_name:'Identity '+agent.id,name:'Identity provenance',goal:'Assert this distinct agent identity'}),result=await tool('experiment_create',{cwd:ownCwd,...create},agentClient);expect(result.isError).not.toBe(true);const row=(await admin.query('SELECT agent_id,human_id,credential_id FROM graybox.activities WHERE batch_id=$1',[create.batch_id])).rows[0];expect(row.agent_id).toBe(agent.id);expect(row.human_id).toBe(agent.human_id);
       }finally{await agentClient.close();}
     }
   },15000);

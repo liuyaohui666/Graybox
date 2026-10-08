@@ -21,7 +21,7 @@ export async function seedDatabase(pool:Pool,includeRestricted=true) {
   try {
     await c.query('BEGIN'); await c.query('INSERT INTO graybox.workspaces VALUES($1,$2)',[workspace_id,'Local demonstration workspace']);
     for(let i=0;i<3;i++) {
-      const id=randomUUID(),name=['Owner demonstration','Member one demonstration','Member two demonstration'][i]!,role=i===0?'owner':'member';
+      const id=randomUUID(),name=['本地用户1','本地用户2','本地用户3'][i]!,role=i===0?'owner':'member';
       await c.query('INSERT INTO graybox.users VALUES($1,$2,$3)',[id,name,role]);
       const humanToken=randomBytes(32).toString('base64url'); humans.push({id,name,role,token:humanToken});
       await c.query('INSERT INTO graybox.credentials(id,human_id,kind,token_hash,label) VALUES($1,$2,$3,$4,$5)',[randomUUID(),id,'human',createHash('sha256').update(humanToken).digest('hex'),`human_${i}`]);

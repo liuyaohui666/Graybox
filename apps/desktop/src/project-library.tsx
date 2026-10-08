@@ -55,7 +55,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     }catch(e){if(active.current.profile===identity && active.current.id===id)setError((e as Error).message);return false;}
     finally {attempt.current.finish(!!writeSafety.snapshot());writing.current=false;setBusy(false);}
   }
-  const card=(p:Project)=><button className="project-card" key={p.id} onClick={()=>setSelected(p.id)}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>创建者：<Attribution id={p.creator_id} name={p.creator_name}/></small></button>;
+  const card=(p:Project)=><button className="project-card" key={p.id} onClick={()=>setSelected(p.id)}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>项目 owner：<Attribution id={p.owner_id ?? p.creator_id} name={p.owner_name ?? p.creator_name} detail/> · 你在此项目：{p.project_role ?? (p.can_edit?"owner":"member")}</small></button>;
   return <div className="project-library">
     {error&&<div className="error" role="alert"><span>{error}</span><button disabled={busy} onClick={()=>{if(selected)void load(selected).catch(e=>setError(e.message));else void refresh().catch(e=>setError(e.message));}}>重新读取最新数据</button></div>}
     {notice&&<p className="notice" role="status">{notice}</p>}
@@ -63,7 +63,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
       <button className="text-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked())setSelected('');}}>← 返回{page==='home'?'首页':'项目库'}</button>
       {loading&&<p className="empty">正在读取项目…</p>}
       {project&&draft&&<>
-        <div className="section-heading"><h2>{project.name}</h2><span>创建者：<Attribution id={project.creator_id} name={project.creator_name}/> · 修订 {project.revision}</span></div>
+        <div className="section-heading"><h2>{project.name}</h2><span>项目 owner：<Attribution id={project.owner_id ?? project.creator_id} name={project.owner_name ?? project.creator_name} detail/> · 你在此项目：{project.project_role ?? (project.can_edit?"owner":"member")} · 修订 {project.revision}</span></div>
         <p>项目进度：{lifecycleLabel(project.lifecycle)} · 优先级：{priorityNames[project.priority]}</p>
         {project.can_edit?<form className="library-form" onSubmit={e=>{e.preventDefault();void write('project_update',{id:project.id,name:draft.name.trim(),description:draft.description,lifecycle:draft.lifecycle,priority:draft.priority,tags:draft.tags},draft.revision,()=>{dirty.current=false;});}}>
           <fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>项目名称<input required maxLength={120} value={draft.name} onChange={e=>change({name:e.target.value})}/></label>
@@ -74,7 +74,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
           <div className="library-tags">{draft.tags.map(t=><button type="button" key={t} aria-label={`移除标签 ${t}`} onClick={()=>change({tags:draft.tags.filter(v=>v!==t)})}>{t} ×</button>)}</div>
           {draft.revision!==project.revision&&<p className="modal-error">项目已有新修订。草稿仍保留原修订，保存时服务器会检查冲突；请核对最新内容后重新编辑。</p>}
           </fieldset><div className="library-tags"><button className="primary" disabled={busy||(!!pendingWrite&&pendingWrite.operation!=='project_update')}>保存项目</button><button className="secondary" type="button" disabled={locked} onClick={()=>{if(!blocked())void load(project.id,true).catch(e=>setError(e.message));}}>放弃元数据草稿，载入最新内容</button></div>
-        </form>:<><p className="prose">{project.description||'尚未填写说明'}</p><div className="library-tags">{project.tags.map(t=><span key={t} className="status">{t}</span>)}</div><p className="muted">项目创建者或团队 owner 可以编辑项目和添加经验报告。</p></>}
+        </form>:<><p className="prose">{project.description||'尚未填写说明'}</p><div className="library-tags">{project.tags.map(t=><span key={t} className="status">{t}</span>)}</div><p className="muted">仅项目 owner 可以编辑项目、实验和添加经验报告；member 可以阅读与评论。</p></>}
         <div className="section-heading spaced"><h2>项目经验报告</h2>{project.can_edit&&<button className="secondary" disabled={locked} onClick={()=>setReportOpen(v=>!v)}>{reportOpen?'收起草稿':'＋ 添加经验报告'}</button>}</div>
         {project.can_edit&&<form className="library-form" hidden={!reportOpen} onSubmit={e=>{e.preventDefault();const form=e.currentTarget;void write('retrospective_create',reportPayload(project.id,new FormData(form),custom),project.revision,()=>{form.reset();setCustom([]);setReportOpen(false);});}}>
           <fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>报告标题<input name="title" required maxLength={200}/></label><label>报告结论<select name="outcome" defaultValue="inconclusive">{Object.entries(outcomeNames).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>

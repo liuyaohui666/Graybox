@@ -4,17 +4,17 @@ import {test,expect,vi,afterEach} from 'vitest';
 import {Avatar,Attribution,PeopleContext} from '../../apps/desktop/src/avatars.tsx';
 import {displayName,personLabel,AvatarGeneration,avatarCrop,prepareAvatar} from '../../apps/desktop/src/avatar-model.ts';
 test('local demo presentation is short and real names are preserved',()=>{
- expect(displayName({name:'Owner demonstration'},'local')).toBe('owner');
- expect(displayName({name:'Member one demonstration'},'local')).toBe('member 1');
- expect(displayName({name:'Member two demonstration'},'local')).toBe('member 2');
+ expect(displayName({name:'Owner demonstration'},'local')).toBe('本地用户1');
+ expect(displayName({name:'Member one demonstration'},'local')).toBe('本地用户2');
+ expect(displayName({name:'Member two demonstration'},'local')).toBe('本地用户3');
  expect(displayName({name:'Owner demonstration'},'cloud')).toBe('Owner demonstration');
  expect(displayName({name:'江微雪'},'local')).toBe('江微雪');
- expect(personLabel({name:'Owner demonstration',role:'owner'},'local')).toBe('owner');
+ expect(personLabel({name:'Owner demonstration',role:'owner'},'local')).toBe('本地用户1');
 });
-test('compact avatar has accessible name plus exact owner/member and agent identity remains visible',()=>{
+test('compact avatar uses person name without global role and agent identity remains visible',()=>{
  const person={id:'a',name:'江微雪',role:'owner',avatar_data:null};
  const render=(id:string,agentId?:string)=>renderToStaticMarkup(<PeopleContext.Provider value={{people:[person],mode:'cloud',refresh:async()=>{}}}><Attribution id={id} agentId={agentId}/></PeopleContext.Provider>);
- expect(render('a')).toContain('title="江微雪 · owner"');expect(render('a')).toContain('aria-label="江微雪 · owner"');
+ expect(render('a')).toContain('title="江微雪"');expect(render('a')).toContain('aria-label="江微雪"');expect(render('a')).not.toContain('owner');
  expect(render('a','agent')).toContain('Agent');expect(render('missing')).toContain('历史记录未注明');
  expect(renderToStaticMarkup(<Avatar person={{...person,role:'member',avatar_data:'https://bad'}}/>)).not.toContain('https://bad');
 });

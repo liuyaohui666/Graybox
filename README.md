@@ -14,7 +14,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1
 
 已配置的隔离数据库位于仓库外 `../work/postgres/data`，端口 **55439**，使用已安装的 PostgreSQL 18 二进制。没有修改原有系统数据库服务。API 仅监听 `127.0.0.1:4318`，网页开发服务为 `127.0.0.1:4317`。
 
-桌面显示的三个身份是可切换的**本地测试身份**，不是生产登录；每个身份另有独立 Agent 凭据。`.env`、`.local/credentials.json`、个人客户端映射不进 Git。不要将这些文件放进分享包。此本机开发版没有云同步、离线写入队列或远程访问入口。
+本地桌面固定使用现有凭据文件中的第一个人类账号，侧栏只显示自己的头像与昵称；点击头像可更换或恢复默认头像。保留的三个人类账号与独立 Agent 凭据用于隔离测试，不提供日常身份切换入口。`.env`、`.local/credentials.json`、个人客户端映射不进 Git。不要将这些文件放进分享包。此本机开发版没有云同步、离线写入队列或远程访问入口。
 
 ## 可用流程
 
@@ -84,3 +84,9 @@ pnpm run api
 `node scripts/build-client.mjs` 生成 `.local/client-release`，仅包含独立 CLI/MCP bundle、专用 Skill、中文安装/配对/项目绑定说明和 MCP 配置示例，无个人凭据与 node_modules。需要 Node.js 24；分享时压缩整个生成目录。入口：`node runtime/client.mjs help`；MCP：`node runtime/client.mjs mcp serve`。每位成员使用自己的人类账号批准独立 Agent 配对，外部个人配置使用绝对路径，并为实际项目绑定 UUID。
 
 CLI 新增 `retrospective create|list`、`comment create|list`、`tag list [--q TEXT]`；全部显式 `--cwd ABS`。写入使用 exact shared command envelope，当前项目 `expected_revision` 和稳定 UUID 键，详见 [复盘格式](skills/graybox/references/project-retrospective.md) 与 [中文安装说明](skills/graybox/references/setup.md)。MCP 暴露对应五个工具。报告与评论不可编辑或撤销，通过新报告/纠正评论补充。
+
+## 项目权限与团队账号管理（0.2.1）
+
+账号固定，角色随项目变化：项目创建者是该项目的 owner，其他团队账号是 member。项目详情显示项目 owner 与当前账号的实际项目角色；同一个人可以在自己的项目中是 owner，在别人的项目中是 member。owner 可编辑项目、记录实验/证据、提交验收和添加经验报告；所有团队成员可阅读与评论。Agent 继承其人类账号的项目权限，并同时受凭据项目范围约束。
+
+团队管理只负责邀请、停用等账号管理，不授予编辑其他人项目的能力。历史创建者未知的项目保持未分配、只读，不自动归属团队管理账号。当前不提供转移项目 owner 的功能。每种领域写入与撤销预览/执行都检查当前项目归属；已成功的原始幂等收据仍可按原请求重试，读取项目时重新计算当前角色。旧活动、创建者和历史内容保持原样。

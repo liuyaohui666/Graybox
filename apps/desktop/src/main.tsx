@@ -12,8 +12,7 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
-import {Attribution,PeopleProvider,AvatarEditor} from "./avatars.tsx";
-import {personLabel} from "./avatar-model.ts";
+import {Attribution,PeopleProvider,SidebarAccount} from "./avatars.tsx";
 import { LibraryNavigation, LatestProfileRefresh } from "./library-app-state.ts";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
@@ -71,6 +70,13 @@ function App() {
     selection = useRef("");
   const pending = useRef(commandRetry);
   const activeProfile = people.find((p) => p.id === profile);
+  const editableProjects = projects.filter(p => p.can_edit);
+  const detailCanEdit = !!detail && projects.some(p => p.id === detail.project_id && p.can_edit);
+  const canPreviewUndo = (entry: Activity) => {
+    const batch = activity.filter(a => a.batch_id === entry.batch_id);
+    return batch.length > 0 && batch.every(a => a.human_id === profile && !a.agent_id &&
+      !["comment", "retrospective"].includes(a.entity_type) && projects.some(p => p.id === a.project_id && p.can_edit));
+  };
   function navigate(next: Page, completedWrite=false) {
     const generation = navigation.current.accept(busy,mutationLock.current,writeSafety.snapshot(),completedWrite);
     if (generation === null) return false;
@@ -209,6 +215,10 @@ function App() {
     event.preventDefault();
     const f = new FormData(event.currentTarget);
     const value = (k: string) => String(f.get(k) ?? "").trim();
+    if ((dialog === "experiment" && !editableProjects.some(p => p.id === value("project"))) ||
+        ((dialog === "summary" || dialog === "evidence") && !detailCanEdit)) {
+      setError("仅项目 owner 可以编辑此项目的实验。");return;
+    }
     if (dialog === "project")
       void mutate("project_create", {
         workspace_id: value("workspace"),
@@ -350,24 +360,7 @@ function App() {
           <span>记录事实，留住判断。</span>
           <p>每一份结论，都能回到当时的实验与证据。</p>
         </div>
-        <div className="profile">
-          <AvatarEditor profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
-          <label>
-            当前身份
-            <select
-              aria-label="切换当前身份"
-              value={profile}
-              disabled={busy || !!pendingWrite || people.length < 2}
-              onChange={(e) => setProfile(e.target.value)}
-            >
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {personLabel(p,mode)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <SidebarAccount profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
       </aside>
       <main>
         <header className="topbar">
@@ -424,7 +417,7 @@ function App() {
             </div>
             <button
               className="primary"
-              disabled={!loaded || busy || !!pendingWrite}
+              disabled={!loaded || busy || !!pendingWrite || (page === "experiments" && projects.length > 0 && editableProjects.length === 0)}
               onClick={() =>
                 setDialog(
                   page !== "experiments" || projects.length === 0
@@ -570,7 +563,7 @@ function App() {
                         {a.batch_id && (
                           <button
                             className="secondary small"
-                            disabled={busy}
+                            disabled={busy || !!pendingWrite || !canPreviewUndo(a)}
                             onClick={() => void previewUndo(a.batch_id)}
                           >
                             预览撤销
@@ -618,7 +611,7 @@ function App() {
                     <div className="label-action">
                       <h4>本次总结</h4>
                       <button
-                        disabled={busy}
+                        disabled={busy || !!pendingWrite || !detailCanEdit}
                         onClick={() => setDialog("summary")}
                       >
                         编辑
@@ -635,7 +628,7 @@ function App() {
                         技术证据 <span>{detail.evidence?.length ?? 0}</span>
                       </h4>
                       <button
-                        disabled={busy}
+                        disabled={busy || !!pendingWrite || !detailCanEdit}
                         onClick={() => setDialog("evidence")}
                       >
                         ＋ 记录
@@ -689,7 +682,7 @@ function App() {
                         detail.status === "waiting_for_review") && (
                         <button
                           className="secondary"
-                          disabled={busy}
+                          disabled={busy || !detailCanEdit}
                           onClick={() =>
                             void mutate(
                               "experiment_update",
@@ -706,7 +699,7 @@ function App() {
                       <button
                         className="primary"
                         disabled={
-                          busy || detail.status === "waiting_for_review"
+                          busy || !detailCanEdit || detail.status === "waiting_for_review"
                         }
                         onClick={() =>
                           void mutate(
@@ -730,7 +723,7 @@ function App() {
             <span>
               GRAYBOX <b>·</b> 留下结果，也留下为什么。
             </span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.2.0 · 自动刷新 15 秒</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.2.1 · 自动刷新 15 秒</span>
           </footer>
         </div>
       </main>
@@ -786,8 +779,8 @@ function App() {
             <>
               <label>
                 所属项目
-                <select name="project" defaultValue={projectFilter}>
-                  {projects.map((p) => (
+                <select name="project" defaultValue={editableProjects.some(p => p.id === projectFilter) ? projectFilter : editableProjects[0]?.id}>
+                  {editableProjects.map((p) => (
                     <option value={p.id} key={p.id}>
                       {p.name}
                     </option>
@@ -898,7 +891,7 @@ function App() {
             >
               取消
             </button>
-            <button className="primary" disabled={busy}>
+            <button className="primary" disabled={busy || (dialog === "experiment" ? !editableProjects.length : (dialog === "summary" || dialog === "evidence") && !detailCanEdit)}>
               {busy ? "保存中…" : "保存记录"}
             </button>
           </div>

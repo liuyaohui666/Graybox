@@ -55,6 +55,9 @@ export interface Project {
   tags: string[];
   creator_name?: string | null;
   creator_id?: string | null;
+  project_role?: "owner" | "member";
+  owner_id?: string | null;
+  owner_name?: string | null;
   can_edit: boolean;
   workspace_id: string;
   revision: number;
@@ -95,6 +98,7 @@ export interface Activity {
   batch_id: string;
   agent_id?: string;
   human_id: string;
+  project_id: string;
   created_at?: string;
   timestamp?: string;
   before: unknown;

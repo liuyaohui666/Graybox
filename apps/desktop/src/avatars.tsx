@@ -19,6 +19,10 @@ export function Attribution({id,name,agentId,detail=false}:{id?:string|null;name
  const {people,mode}=useContext(PeopleContext),person=people.find(p=>p.id===id),fallback=person??(name?{id:id??name,name,role:''}:undefined);
  return <span className="attribution"><Avatar person={fallback} mode={mode}/>{detail&&<span>{fallback?personLabel(fallback,mode):'历史记录未注明'}</span>}{agentId&&<span className="agent-indicator">Agent</span>}</span>;
 }
+export function SidebarAccount(props:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
+ const {mode}=useContext(PeopleContext);
+ return <div className="profile"><AvatarEditor {...props}/><span className="account-name">{props.person?personLabel(props.person,mode):'连接中'}</span></div>;
+}
 export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
  const {people,mode,refresh}=useContext(PeopleContext),guard=useRef(new AvatarGeneration()),active=useRef(profile),writing=useRef(false),[message,setMessage]=useState('');active.current=profile;
  const current=people.find(p=>p.id===profile)??person,input=useRef<HTMLInputElement>(null),menu=useRef<HTMLDetailsElement>(null);

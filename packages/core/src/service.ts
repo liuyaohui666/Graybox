@@ -88,14 +88,15 @@ export class Service {
     const evidence=await this.children(this.pool,'evidence',id),submissions=await this.children(this.pool,'submissions',id);return {...e,evidence,submissions};
   }
   private async canEdit(c:Pool|PoolClient,p:Principal,project:Entity) {
-    return project.creator_id===p.human_id || (await c.query('SELECT role FROM graybox.users WHERE id=$1',[p.human_id])).rows[0]?.role==='owner';
+    return project.creator_id===p.human_id;
   }
   private async editable(c:Pool|PoolClient,p:Principal,project:Entity) {
-    if(!await this.canEdit(c,p,project)) fail('FORBIDDEN','Only the project creator or owner may edit this project',403);
+    if(!await this.canEdit(c,p,project)) fail('FORBIDDEN','Only the project owner may edit this project',403);
   }
   private async presentProject(c:Pool|PoolClient,p:Principal,project:Entity):Promise<Entity> {
     const creator=project.creator_id?(await c.query('SELECT name FROM graybox.users WHERE id=$1',[project.creator_id])).rows[0]:null;
-    return {...project,creator_name:creator?.name??null,can_edit:await this.canEdit(c,p,project)};
+    const can_edit=await this.canEdit(c,p,project);
+    return {...project,creator_name:creator?.name??null,owner_id:project.creator_id??null,owner_name:creator?.name??null,project_role:can_edit?'owner':'member',can_edit};
   }
   private async projectData(c:PoolClient,workspace:string,data:Record<string,unknown>) {
     const names:string[]=[];
@@ -194,7 +195,7 @@ export class Service {
         await this.record(c,p,batch_id,type,type==='comment_create'?'comment':'retrospective',null,result,session_id);
         await this.record(c,p,batch_id,type,'project',before,parent,session_id);
       } else if(type==='experiment_create') {
-        this.scope(p,payload.project_id);await this.entity(c,'project',payload.project_id,true);
+        this.scope(p,payload.project_id);await this.editable(c,p,await this.entity(c,'project',payload.project_id,true));
         let seriesId=payload.series_id;
         if(!seriesId) {
           seriesId=randomUUID();await c.query('INSERT INTO graybox.experiment_series(id,project_id,name) VALUES($1,$2,$3)',[seriesId,payload.project_id,payload.series_name]);
@@ -207,7 +208,9 @@ export class Service {
         result=await this.entity(c,'experiment',id);await this.record(c,p,batch_id,type,'experiment',null,result,session_id);
       } else {
         const id=type==='experiment_update'?payload.id:payload.experiment_id;
-        const before=await this.entity(c,'experiment',id,true,p);this.revision(before,command.expected_revision);
+        const before=await this.entity(c,'experiment',id,true,p);
+        await this.editable(c,p,await this.entity(c,'project',String(before.project_id),true,p));
+        this.revision(before,command.expected_revision);
         let data=this.business(before,'experiment');
         if(type==='experiment_update') {
           const {id:ignored,...fields}=payload;
@@ -245,9 +248,12 @@ export class Service {
       changes.set(key,{entity_type:a.entity_type,entity_id:a.entity_id,project_id:a.project_id,before:previous?previous.before:a.before,after:a.after,expected_revision:a.after.revision});
     }
     const sorted=[...changes.values()].sort((a,b)=>`${a.entity_type}:${a.entity_id}`.localeCompare(`${b.entity_type}:${b.entity_id}`));
+    // Every domain entity belongs to a project; historical batch ownership is not edit authority.
+    for(const projectId of new Set(sorted.map(change=>change.project_id))) {
+      await this.editable(c,p,await this.entity(c,'project',projectId,true,p));
+    }
     for(const change of sorted) {
       const current=await this.entity(c,change.entity_type,change.entity_id,true);
-      if(change.entity_type==='project') await this.editable(c,p,current);
       if(current.revision!==change.expected_revision) fail('UNDO_CONFLICT','Entity has a later revision');
       const firstRevision=change.before?.revision??0;
       const later=await c.query("SELECT id FROM graybox.activities WHERE entity_type=$1 AND entity_id=$2 AND batch_id<>$3 AND (after->>'revision')::integer>$4",[change.entity_type,change.entity_id,batchId,firstRevision]);

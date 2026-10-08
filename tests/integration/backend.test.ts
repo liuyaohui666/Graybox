@@ -180,7 +180,7 @@ describe('real PostgreSQL M1 invariants',()=> {
     expect(third.version).toBe(second.version+1);
   });
   test('restricted credential authorized project positive path and scoped undo',async()=> {
-    const p=await project();await admin.query("UPDATE graybox.credentials SET project_ids=$1 WHERE label='restricted_agent'",[JSON.stringify([p.id])]);
+    const p=(await command('project_create',{workspace_id:fixture.workspace_id,name:'P'},batch(),undefined,fixture.tokens.third_agent)).data;await admin.query("UPDATE graybox.credentials SET project_ids=$1 WHERE label='restricted_agent'",[JSON.stringify([p.id])]);
     const limited=fixture.tokens.restricted_agent;const b=batch();
     const e=(await command('experiment_create',{project_id:p.id,series_name:'Scoped',name:'Scoped',goal:'G'},b,undefined,limited)).data;
     expect((await req('GET',`/v1/experiments/${e.id}`,undefined,limited)).status).toBe(200);
@@ -291,7 +291,7 @@ describe('real PostgreSQL M1 invariants',()=> {
     const p=await project();const e=await experiment(p.id);const auth=fixture.tokens.restricted_agent;
     const known=await command('experiment_update',{id:e.id,name:'X'},batch(),e.revision,auth),missing=await command('experiment_update',{id:randomUUID(),name:'X'},batch(),e.revision,auth);
     expect(known).toEqual(missing);expect(known.status).toBe(404);
-    const allowed=await project();await admin.query("UPDATE graybox.credentials SET project_ids=$1 WHERE label='restricted_agent'",[JSON.stringify([allowed.id])]);
+    const allowed=(await command('project_create',{workspace_id:fixture.workspace_id,name:'P'},batch(),undefined,fixture.tokens.third_agent)).data;await admin.query("UPDATE graybox.credentials SET project_ids=$1 WHERE label='restricted_agent'",[JSON.stringify([allowed.id])]);
     for(const reference of ['series_id','based_on'] as const) {
       const create=(id:string)=>command('experiment_create',{project_id:allowed.id,...(reference==='based_on'?{series_name:'S'}:{}),[reference]:id,name:'X',goal:'G'},batch(),undefined,auth);
       const knownReference=await create(reference==='series_id'?e.series_id:e.id),absentReference=await create(randomUUID());expect(knownReference).toEqual(absentReference);expect(knownReference.status).toBe(404);

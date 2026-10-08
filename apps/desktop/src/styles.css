@@ -218,19 +218,13 @@ nav button b {
   color: #776e52;
   font-size: 12px;
 }
-.profile label {
-  font-size: 9px;
-  color: #8c938a;
-}
-.profile select {
-  display: block;
-  border: 0;
-  background: transparent;
-  max-width: 141px;
-  margin-top: 3px;
-  color: #505c51;
+.account-name {
   font-size: 12px;
-  padding: 0;
+  color: #505c51;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 main {
   margin-left: 220px;
@@ -988,7 +982,7 @@ textarea::placeholder {
     margin-top: auto;
     justify-content: center;
   }
-  .profile > label {
+  .profile > .account-name {
     display: none;
   }
   nav {

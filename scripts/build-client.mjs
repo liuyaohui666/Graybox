@@ -13,5 +13,6 @@ await cp(resolve(root,'skills/graybox'),resolve(out,'skills/graybox'),{recursive
 await cp(resolve(root,'skills/graybox/config.toml.example'),resolve(out,'config.toml.example'));
 await cp(resolve(root,'skills/graybox/references/setup.md'),resolve(out,'安装说明.md'));
 const hash=createHash('sha256').update(await readFile(resolve(out,'runtime/client.mjs'))).digest('hex');
-await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',version:'0.2.0',node:'24',client_sha256:hash},null,2)+'\n');
+const version=JSON.parse(await readFile(resolve(root,'package.json'),'utf8')).version;
+await writeFile(resolve(out,'release.json'),JSON.stringify({product:'Graybox',version,node:'24',client_sha256:hash},null,2)+'\n');
 console.log(out);
