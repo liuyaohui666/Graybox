@@ -49,8 +49,8 @@ Files: packages/client/src/client.ts; packages/local-context/src/binding.ts; app
 - [x] Red tests for bound project report/comment creation, tag listing, wrong project rejection, retries and MCP exposure.
 - [x] Add CLI `retrospective create|list`, `comment create|list`, `tag list`; MCP `retrospective_create`, `retrospective_list`, `comment_create`, `comment_list`, `tag_list`; use exact API envelopes and explicit cwd binding. Avoid fragile discriminated-union numeric indexing for new commands.
 - [x] Skill documents user-triggered project recap, standard fields, custom sections, evidence limits, reading existing tags, explicit project binding, retry/conflict recovery and per-user pairing. Package portable client runtime and Skill installation instructions without secrets or modifying global user settings.
-- [ ] Run full suite/typecheck/native build, independent review and representative browser plus MCP/CLI flow using isolated test identities.
-- [ ] Back up cloud database; deploy new immutable release and additive migration; verify authenticated project flow and old records, unauthenticated rejection, old server service continuity; rebuild local desktop/start scripts/source+server+Skill archives and hashes.
+- [x] Run full suite/typecheck/native build, independent review and representative browser plus MCP/CLI flow using isolated test identities.
+- [x] Back up cloud database; deploy new immutable release and additive migration; verify authenticated project flow and old records, unauthenticated rejection, old server service continuity; rebuild local desktop/start scripts/source+server+Skill archives and hashes.
 
 ## Acceptance
 
