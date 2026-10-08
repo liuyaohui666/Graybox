@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 use serde::{Deserialize, Serialize};
 use serde_json::{Value,json};
 use std::{fs, time::Duration, sync::{Mutex,OnceLock}};
