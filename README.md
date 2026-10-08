@@ -77,3 +77,10 @@ pnpm run api
 ## 后续边界
 
 本次用户明确选择先完成本地开发验证。已用真实 Codex CLI 临时加载本地 MCP，完成查询上下文、创建实验、追加证据、提交快照与审计核验，没有修改全局 Codex 设置。真实 Supabase 登录/Agent 配对、邀请、三人跨机器协作仍需后续联调；媒体、人工评价、Knowledge/中文搜索、自动恢复与正式安装升级属于后续里程碑。不能把本机演示模式部署到公网。
+
+
+## 项目经验库客户端与 Skill
+
+`node scripts/build-client.mjs` 生成 `.local/client-release`，仅包含独立 CLI/MCP bundle、专用 Skill、中文安装/配对/项目绑定说明和 MCP 配置示例，无个人凭据与 node_modules。需要 Node.js 24；分享时压缩整个生成目录。入口：`node runtime/client.mjs help`；MCP：`node runtime/client.mjs mcp serve`。每位成员使用自己的人类账号批准独立 Agent 配对，外部个人配置使用绝对路径，并为实际项目绑定 UUID。
+
+CLI 新增 `retrospective create|list`、`comment create|list`、`tag list [--q TEXT]`；全部显式 `--cwd ABS`。写入使用 exact shared command envelope，当前项目 `expected_revision` 和稳定 UUID 键，详见 [复盘格式](skills/graybox/references/project-retrospective.md) 与 [中文安装说明](skills/graybox/references/setup.md)。MCP 暴露对应五个工具。报告与评论不可编辑或撤销，通过新报告/纠正评论补充。

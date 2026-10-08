@@ -53,6 +53,9 @@ export class ApiClient {
   project(projectId:string){return this.request<Project>('GET',`/v1/projects/${id(projectId)}`);}
   experiment(experimentId:string){return this.request<Experiment>('GET',`/v1/experiments/${id(experimentId)}`);}
   experiments(projectId:string){return this.request<Experiment[]>('GET',`/v1/experiments?project_id=${id(projectId)}`);}
+  retrospectives(projectId:string){return this.request<Array<Record<string,unknown>>>('GET',`/v1/projects/${id(projectId)}/retrospectives`);}
+  comments(projectId:string){return this.request<Array<Record<string,unknown>>>('GET',`/v1/projects/${id(projectId)}/comments`);}
+  tags(workspaceId:string,q?:string){const query=new URLSearchParams({workspace_id:id(workspaceId)});if(q)query.set('q',q);return this.request<Array<{id:string;workspace_id:string;name:string}>>('GET',`/v1/tags?${query}`);}
   activity(filters:{entity_id?:string;batch_id?:string}={}){const query=new URLSearchParams();for(const [key,value]of Object.entries(filters))if(value)query.set(key,id(value));return this.request<Array<Record<string,unknown>>>('GET',`/v1/activity${query.size?'?'+query:''}`);}
   async command(body:unknown){const parsed=commandSchema.safeParse(body);if(!parsed.success)throw new ClientError('VALIDATION','Command violates the shared contract; stable UUID keys and revisions are required');return this.request<Entity>('POST','/v1/commands',parsed.data);}
   preview(batchId:string){return this.request<{batch_id:string;batch_revision:number;preview_token:string;expires_at:string;changes:Array<{project_id:string;[key:string]:unknown}>}>('POST',`/v1/batches/${id(batchId)}/preview`,{});}
