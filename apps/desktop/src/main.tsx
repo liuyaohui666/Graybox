@@ -12,6 +12,8 @@ import {
   type UndoPreview,
 } from "./model.ts";
 import "./styles.css";
+import {Attribution,PeopleProvider,AvatarEditor} from "./avatars.tsx";
+import {personLabel} from "./avatar-model.ts";
 import { LibraryNavigation, LatestProfileRefresh } from "./library-app-state.ts";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
@@ -306,7 +308,7 @@ function App() {
   const projectName = (id: string) =>
     projects.find((p) => p.id === id)?.name ?? "项目";
   return (
-    <div className="shell">
+    <PeopleProvider profile={profile} mode={mode}><div className="shell">
       <aside className="sidebar">
         <div className="brand">
           <span className="brandmark">▧</span>
@@ -349,9 +351,7 @@ function App() {
           <p>每一份结论，都能回到当时的实验与证据。</p>
         </div>
         <div className="profile">
-          <span className="avatar">
-            {activeProfile?.name.slice(0, 1) ?? "灰"}
-          </span>
+          <Attribution id={profile} name={activeProfile?.name}/>
           <label>
             当前身份
             <select
@@ -362,13 +362,13 @@ function App() {
             >
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.role === "owner" ? " · Owner" : ""}
+                  {personLabel(p,mode)}
                 </option>
               ))}
             </select>
           </label>
         </div>
+        <AvatarEditor profile={profile} person={activeProfile} locked={busy||!!pendingWrite} setBusy={setBusy}/>
       </aside>
       <main>
         <header className="topbar">
@@ -552,9 +552,7 @@ function App() {
                             {a.entity_type} · {a.entity_id.slice(0, 8)}
                           </p>
                           <small>
-                            {people.find((p) => p.id === a.human_id)?.name ??
-                              a.human_id.slice(0, 8)}
-                            {a.agent_id ? " · Agent 写入" : " · 人类操作"} ·{" "}
+                            <Attribution id={a.human_id} agentId={a.agent_id}/> ·{" "}
                             {date(a.created_at ?? a.timestamp)}
                           </small>
                           <details>
@@ -948,7 +946,7 @@ function App() {
           </button>
         </div>
       </dialog>
-    </div>
+    </div></PeopleProvider>
   );
 }
 createRoot(document.getElementById("root")!).render(

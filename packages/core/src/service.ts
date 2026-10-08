@@ -1,5 +1,7 @@
 import { createHash,createHmac,randomBytes,randomUUID,timingSafeEqual } from 'node:crypto';
 import type { Pool,PoolClient } from 'pg';
+import {z} from 'zod';
+import {validAvatar} from './avatar.ts';
 import { commandSchema,undoSchema,type Principal,type Entity } from '../../contracts/src/index.ts';
 
 export class DomainError extends Error { constructor(public code:string,message:string,public status=409) {super(message);} }
@@ -23,6 +25,21 @@ export class Service {
     return row ?? fail('UNAUTHORIZED','Valid local credential required',401);
   }
   scope(p:Principal,projectId:string) { if(p.project_ids && !p.project_ids.includes(projectId)) fail('FORBIDDEN','Project is outside credential scope',403); }
+  async people(p:Principal) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human profile required',403);
+      return (await c.query('SELECT id,name,role,avatar_data FROM graybox.users ORDER BY role,name,id')).rows;
+    });
+  }
+  async setAvatar(p:Principal,body:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human profile required',403);
+      const parsed=z.strictObject({avatar_data:z.string().max(180000).nullable()}).safeParse(body);
+      if(!parsed.success)return fail('VALIDATION','Avatar data required',400);
+      if(parsed.data.avatar_data!==null&&!validAvatar(parsed.data.avatar_data))fail('VALIDATION','Avatar must be a bounded 128–256px PNG or JPEG raster',400);
+      return (await c.query('UPDATE graybox.users SET avatar_data=$2 WHERE id=$1 RETURNING id,name,role,avatar_data',[current.human_id,parsed.data.avatar_data])).rows[0];
+    });
+  }
   private async currentPrincipal(c:Pool|PoolClient,id:string):Promise<Principal> {
     const row=(await c.query(`SELECT a.* FROM graybox.authoritative_credential($1) a JOIN graybox.credentials c ON c.id=a.id JOIN graybox.users u ON u.id=a.human_id WHERE ($2='local' OR (c.expires_at IS NOT NULL AND u.username IS NOT NULL))`,[id,this.mode])).rows[0] as Principal|undefined;
     return row??fail('UNAUTHORIZED','Credential revoked',401);

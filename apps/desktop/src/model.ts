@@ -54,6 +54,7 @@ export interface Project {
   priority: string;
   tags: string[];
   creator_name?: string | null;
+  creator_id?: string | null;
   can_edit: boolean;
   workspace_id: string;
   revision: number;

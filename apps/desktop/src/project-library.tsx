@@ -2,10 +2,11 @@ import React, {useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {DraftWriteAttempt,navigationBlocked} from './library-write-guard.ts';
 import {writeSafety} from './write-safety.ts';
 import {request} from './platform.ts';
+import {Attribution} from './avatars.tsx';
 import type {Project,Experiment} from './model.ts';
 import {addTag,filterProjects,prioritizedIdeas,lifecycleNames,lifecycleLabel,priorityNames,outcomeNames,outcomeLabel,reportSections,reportPayload,normalizeTag} from './project-library-model.ts';
-interface Report {id:string;project_id:string;title:string;outcome:string;author_name:string;created_at:string;custom_sections:{title:string;content:string}[];[key:string]:unknown}
-interface Comment {id:string;body:string;author_name:string;created_at:string;agent_id?:string|null}
+interface Report {author_id?:string;id:string;project_id:string;title:string;outcome:string;author_name:string;created_at:string;custom_sections:{title:string;content:string}[];[key:string]:unknown}
+interface Comment {author_id?:string;id:string;body:string;author_name:string;created_at:string;agent_id?:string|null}
 interface Draft {name:string;description:string;lifecycle:string;priority:string;tags:string[];revision:number}
 interface Props {profile:string;page:'home'|'projects';projects:Project[];experiments:Experiment[];createdId:string;busy:boolean;setBusy:(value:boolean)=>void;send:(type:string,payload:object,revision?:number)=>Promise<unknown>;refresh:()=>Promise<void>;openExperiment:(id:string)=>void;tagFilter?:string;openTag?:(tag:string)=>void}
 export function ProjectLibrary({profile,page,projects,experiments,createdId,busy,setBusy,send,refresh,openExperiment,tagFilter='',openTag}:Props) {
@@ -54,7 +55,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     }catch(e){if(active.current.profile===identity && active.current.id===id)setError((e as Error).message);return false;}
     finally {attempt.current.finish(!!writeSafety.snapshot());writing.current=false;setBusy(false);}
   }
-  const card=(p:Project)=><button className="project-card" key={p.id} onClick={()=>setSelected(p.id)}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>创建者：{p.creator_name||'历史记录未注明'}</small></button>;
+  const card=(p:Project)=><button className="project-card" key={p.id} onClick={()=>setSelected(p.id)}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>创建者：<Attribution id={p.creator_id} name={p.creator_name}/></small></button>;
   return <div className="project-library">
     {error&&<div className="error" role="alert"><span>{error}</span><button disabled={busy} onClick={()=>{if(selected)void load(selected).catch(e=>setError(e.message));else void refresh().catch(e=>setError(e.message));}}>重新读取最新数据</button></div>}
     {notice&&<p className="notice" role="status">{notice}</p>}
@@ -62,7 +63,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
       <button className="text-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked())setSelected('');}}>← 返回{page==='home'?'首页':'项目库'}</button>
       {loading&&<p className="empty">正在读取项目…</p>}
       {project&&draft&&<>
-        <div className="section-heading"><h2>{project.name}</h2><span>创建者：{project.creator_name||'历史记录未注明'} · 修订 {project.revision}</span></div>
+        <div className="section-heading"><h2>{project.name}</h2><span>创建者：<Attribution id={project.creator_id} name={project.creator_name}/> · 修订 {project.revision}</span></div>
         <p>项目进度：{lifecycleLabel(project.lifecycle)} · 优先级：{priorityNames[project.priority]}</p>
         {project.can_edit?<form className="library-form" onSubmit={e=>{e.preventDefault();void write('project_update',{id:project.id,name:draft.name.trim(),description:draft.description,lifecycle:draft.lifecycle,priority:draft.priority,tags:draft.tags},draft.revision,()=>{dirty.current=false;});}}>
           <fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>项目名称<input required maxLength={120} value={draft.name} onChange={e=>change({name:e.target.value})}/></label>
@@ -73,7 +74,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
           <div className="library-tags">{draft.tags.map(t=><button type="button" key={t} aria-label={`移除标签 ${t}`} onClick={()=>change({tags:draft.tags.filter(v=>v!==t)})}>{t} ×</button>)}</div>
           {draft.revision!==project.revision&&<p className="modal-error">项目已有新修订。草稿仍保留原修订，保存时服务器会检查冲突；请核对最新内容后重新编辑。</p>}
           </fieldset><div className="library-tags"><button className="primary" disabled={busy||(!!pendingWrite&&pendingWrite.operation!=='project_update')}>保存项目</button><button className="secondary" type="button" disabled={locked} onClick={()=>{if(!blocked())void load(project.id,true).catch(e=>setError(e.message));}}>放弃元数据草稿，载入最新内容</button></div>
-        </form>:<><p className="prose">{project.description||'尚未填写说明'}</p><div className="library-tags">{project.tags.map(t=><span key={t} className="status">{t}</span>)}</div><p className="muted">项目创建者或团队 Owner 可以编辑项目和添加经验报告。</p></>}
+        </form>:<><p className="prose">{project.description||'尚未填写说明'}</p><div className="library-tags">{project.tags.map(t=><span key={t} className="status">{t}</span>)}</div><p className="muted">项目创建者或团队 owner 可以编辑项目和添加经验报告。</p></>}
         <div className="section-heading spaced"><h2>项目经验报告</h2>{project.can_edit&&<button className="secondary" disabled={locked} onClick={()=>setReportOpen(v=>!v)}>{reportOpen?'收起草稿':'＋ 添加经验报告'}</button>}</div>
         {project.can_edit&&<form className="library-form" hidden={!reportOpen} onSubmit={e=>{e.preventDefault();const form=e.currentTarget;void write('retrospective_create',reportPayload(project.id,new FormData(form),custom),project.revision,()=>{form.reset();setCustom([]);setReportOpen(false);});}}>
           <fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>报告标题<input name="title" required maxLength={200}/></label><label>报告结论<select name="outcome" defaultValue="inconclusive">{Object.entries(outcomeNames).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
@@ -82,16 +83,16 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
           </fieldset><div className="library-tags"><button type="button" disabled={custom.length>=20||locked} onClick={()=>setCustom(v=>[...v,{title:'',content:''}])}>＋ 自定义章节</button><button className="primary" disabled={busy||(!!pendingWrite&&pendingWrite.operation!=='retrospective_create')}>保存经验报告</button></div>
         </form>}
         {reports.length===0&&<p className="empty compact">尚无经验报告。</p>}
-        {reports.map(r=><article key={r.id} className="library-report"><h3>{r.title} <span className="status">{outcomeLabel(r.outcome)}</span></h3><small>{r.author_name}{r.agent_id ? " · Agent 提交" : " · 人类提交"} · {stamp(r.created_at)}</small>{Object.entries(reportSections).map(([key,label])=><section key={key}><h4>{label}</h4><p className="prose">{String(r[key]||'尚未填写')}</p></section>)}{r.custom_sections.map((s,i)=><section key={i}><h4>{s.title}</h4><p className="prose">{s.content}</p></section>)}</article>)}
+        {reports.map(r=><article key={r.id} className="library-report"><h3>{r.title} <span className="status">{outcomeLabel(r.outcome)}</span></h3><small><Attribution id={r.author_id} name={r.author_name} agentId={r.agent_id as string|null}/> · {stamp(r.created_at)}</small>{Object.entries(reportSections).map(([key,label])=><section key={key}><h4>{label}</h4><p className="prose">{String(r[key]||'尚未填写')}</p></section>)}{r.custom_sections.map((s,i)=><section key={i}><h4>{s.title}</h4><p className="prose">{s.content}</p></section>)}</article>)}
         <details className="library-report"><summary>Codex 连接信息</summary><p>项目 ID：<code>{project.id}</code></p><p>空间 ID：<code>{project.workspace_id}</code></p></details>
         <div className="library-tags">{project.tags.map(t=><button key={t} disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked()){openTag?.(t);setSelected('');}}}>查看标签“{t}”的项目</button>)}</div>
-        <h2 className="spaced">团队讨论</h2>{comments.map(c=><article key={c.id} className="library-comment"><small>{c.author_name}{c.agent_id ? " · Agent 提交" : " · 人类提交"} · {stamp(c.created_at)}</small><p className="prose">{c.body}</p></article>)}
+        <h2 className="spaced">团队讨论</h2>{comments.map(c=><article key={c.id} className="library-comment"><small><Attribution id={c.author_id} name={c.author_name} agentId={c.agent_id}/> · {stamp(c.created_at)}</small><p className="prose">{c.body}</p></article>)}
         <form className="library-form" onSubmit={e=>{e.preventDefault();const form=e.currentTarget;void write('comment_create',{project_id:project.id,body:String(new FormData(form).get('body')??'').trim()},project.revision,()=>form.reset());}}><fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>添加评论<textarea name="body" required maxLength={12000} rows={3}/></label></fieldset><button className="primary" disabled={busy||(!!pendingWrite&&pendingWrite.operation!=='comment_create')}>发送评论</button></form>
         <details className="library-report"><summary>历史实验记录（{experiments.filter(e=>e.project_id===project.id).length}）</summary>{experiments.filter(e=>e.project_id===project.id).map(e=><button className="experiment-row" key={e.id} disabled={locked} onClick={()=>{if(!blocked())openExperiment(e.id);}}><span>{e.name} · v{e.version}</span><span>查看实验与证据 →</span></button>)}</details>
       </>}
     </>:page==='home'?<>
       <div className="section-heading"><h2>按优先级推进创意</h2><span className="muted">待做与进行中的项目</span></div><div className="project-grid">{prioritizedIdeas(projects).map(card)}</div>{!prioritizedIdeas(projects).length&&<p className="empty">还没有待推进的创意。</p>}
-      <h2 className="spaced">最近项目经验</h2>{recent.map(r=><button className="experiment-row" key={r.id} onClick={()=>setSelected(r.project_id)}><span><strong>{r.title}</strong><small>{projects.find(p=>p.id===r.project_id)?.name} · {r.author_name}</small></span><span>{outcomeLabel(r.outcome)}</span><time>{stamp(r.created_at)}</time></button>)}{!recent.length&&<p className="empty compact">尚无项目经验报告。</p>}
+      <h2 className="spaced">最近项目经验</h2>{recent.map(r=><button className="experiment-row" key={r.id} onClick={()=>setSelected(r.project_id)}><span><strong>{r.title}</strong><small>{projects.find(p=>p.id===r.project_id)?.name} · <Attribution id={r.author_id} name={r.author_name} agentId={r.agent_id as string|null}/></small></span><span>{outcomeLabel(r.outcome)}</span><time>{stamp(r.created_at)}</time></button>)}{!recent.length&&<p className="empty compact">尚无项目经验报告。</p>}
     </>:<>
       <div className="filters"><input aria-label="搜索项目库" value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索名称、说明或标签…"/></div>
       <div className="library-tags"><button className={!tagFilter?'primary':'secondary'} onClick={()=>openTag?.('')}>所有标签</button>{[...new Set(projects.flatMap(p=>p.tags))].map(t=><button className={normalizeTag(t)===normalizeTag(tagFilter)?'primary':'secondary'} key={t} onClick={()=>openTag?.(t)}>{t}</button>)}</div>

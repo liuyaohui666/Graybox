@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { writeSafety } from "./write-safety.ts";
 export interface Profile { id: string; name: string; role: string }
+export const sessionGeneration=()=>sessionRevision;
 export interface Connection { mode: "local" | "cloud"; endpoint: string; profile?: Profile }
 let bearer: string | undefined;
 let sessionRevision = 0;

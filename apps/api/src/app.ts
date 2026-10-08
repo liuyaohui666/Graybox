@@ -44,6 +44,8 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
   app.get('/v1/health',async()=>({data:await service.health()}));
   app.get('/v1/me',async request=> {const p=principal(request);return {data:{credential_id:p.id,human_id:p.human_id,agent_id:p.agent_id,kind:p.kind,project_ids:p.project_ids}};});
   app.get('/v1/workspaces',async()=>({data:await service.workspaces()}));
+  app.get('/v1/people',async r=>({data:await service.people(principal(r))}));
+  app.post('/v1/profile/avatar',async r=>({data:await service.setAvatar(principal(r),r.body)}));
   app.get<{Querystring:{tag?:string}}>('/v1/projects',async request=>({data:await service.list(principal(request),'projects',undefined,request.query.tag)}));
   app.get<{Querystring:{workspace_id?:string;q?:string}}>('/v1/tags',async request=>({data:await service.tags(principal(request),request.query.workspace_id?id(request.query.workspace_id):undefined,request.query.q)}));
   for(const table of ['retrospectives','comments'] as const) app.get<{Params:{id:string}}>(`/v1/projects/:id/${table}`,async request=>({data:await service.projectChildren(principal(request),id(request.params.id),table)}));

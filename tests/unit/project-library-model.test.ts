@@ -18,6 +18,10 @@ describe('project library model', () => {
   });
 });
 describe('local bridge routes', () => {
+  it('only allows the human directory read and own avatar write methods',()=>{
+    expect(allowedLocalRequest('/v1/people','GET')).toBe(true);expect(allowedLocalRequest('/v1/profile/avatar','POST')).toBe(true);
+    expect(allowedLocalRequest('/v1/people','POST')).toBe(false);expect(allowedLocalRequest('/v1/profile/avatar','GET')).toBe(false);expect(allowedLocalRequest('/v1/profile/avatar/other','POST')).toBe(false);
+  });
   it('allows tags and encoded Chinese queries only on read routes', () => {
     expect(allowedLocalRequest('/v1/tags?workspace_id=abc-123&q=%E6%B8%B8%E6%88%8F','GET')).toBe(true);
     expect(allowedLocalRequest('/v1/projects?tag=Game%20Art','GET')).toBe(true);

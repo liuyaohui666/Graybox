@@ -54,7 +54,7 @@ function localBridge(): Plugin {
           let raw = "";
           for await (const chunk of req) {
             raw += chunk;
-            if (raw.length > 100_000) throw new Error("Request too large");
+            if (Buffer.byteLength(raw,"utf8") > 256*1024) throw new Error("Request too large");
           }
           const input = JSON.parse(raw);
           const profile = file.humans.find(

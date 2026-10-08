@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useSyncExternalStore, createContext } from "react";
 import { connection, configure, authenticate, logout, request, type Connection } from "./platform.ts";
 import { writeSafety, type PendingWrite } from "./write-safety.ts";
+import {Avatar} from "./avatars.tsx";
 import { commandRetry } from "./retry.ts";
 export const ConnectionModeContext = createContext<"local" | "cloud">("cloud");
 export function SessionContent({mode,pendingWrite,children}: {mode: "local" | "cloud"; pendingWrite: PendingWrite | null; children: React.ReactNode}) {
@@ -34,14 +35,14 @@ export function SessionGate({children}: {children: React.ReactNode}) {
   if (state.mode === "local") return <SessionContent mode="local" pendingWrite={pendingWrite}>{children}</SessionContent>;
   return <SessionContent mode="cloud" pendingWrite={pendingWrite}><div className="cloud-controls"><span>{state.profile?.name} · 云端</span><button onClick={() => setManage(!manage)}>团队与 Agent</button><button disabled={busy || !!pendingWrite} onClick={async () => { setBusy(true); try { await logout(); setState({...state, profile: undefined}); setManage(false); } catch(e) { setError((e as Error).message); } finally {setBusy(false);} }}>退出登录</button>{error && <span role="alert">{error}</span>}</div>{manage && <Management owner={state.profile?.role === "owner"} />}{children}</SessionContent>;
 }
-interface Member {id:string; name:string; role:string; disabled_at: string|null}
+interface Member {id:string; name:string; role:string; disabled_at: string|null;avatar_data?:string|null}
 interface Agent {id:string; name:string; revoked_at:string|null; expires_at:string}
 function Management({owner}: {owner:boolean}) {
   const [members,setMembers]=useState<Member[]>([]), [agents,setAgents]=useState<Agent[]>([]), [message,setMessage]=useState(""), [busy,setBusy]=useState(false);
   async function refresh() { const [m,a]=await Promise.all([request<Member[]>("","/v1/members"),request<Agent[]>("","/v1/agents")]); setMembers(m);setAgents(a); }
   useEffect(() => {void refresh().catch(e=>setMessage(e.message));},[]);
   async function action(path:string, body:unknown={}) {setBusy(true);setMessage("");try { const result=await request<{code?:string;expires_at?:string}>("",path,"POST",body); if(result.code) setMessage(`邀请码：${result.code}（有效至 ${result.expires_at}，请安全转交）`); else setMessage("操作已完成。"); await refresh();}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
-  return <section className="session management"><h2>团队成员</h2>{members.map(m=><p key={m.id}>{m.name} · {m.role} {m.disabled_at ? "已停用" : owner && m.role!=="owner" && <button disabled={busy} onClick={()=>void action(`/v1/members/${m.id}/disable`)}>停用成员</button>}</p>)}{owner && <button disabled={busy} onClick={()=>void action("/v1/members/invite")}>生成成员邀请码</button>}<h2>Agent 配对</h2><p>输入 CLI 显示的配对码，授权该 Agent 访问你的项目。当前授权全部项目；配对成功后需在 CLI 完成领取，领取丢失请重新配对。</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action("/v1/agents/pair/approve",{user_code:String(f.get("user_code")).trim(),project_ids:null});}}><input name="user_code" aria-label="Agent 配对码" required autoComplete="off"/><button disabled={busy}>批准配对</button></form>{agents.map(a=><p key={a.id}>{a.name} · {a.revoked_at ? "已撤销" : `有效至 ${a.expires_at}`} {!a.revoked_at && <button disabled={busy} onClick={()=>void action(`/v1/agents/${a.id}/revoke`)}>撤销 Agent</button>}</p>)}{message && <p role="status">{message}</p>}</section>;
+  return <section className="session management"><h2>团队成员</h2>{members.map(m=><p key={m.id}><Avatar person={m}/>{m.name} · {m.role} {m.disabled_at ? "已停用" : owner && m.role!=="owner" && <button disabled={busy} onClick={()=>void action(`/v1/members/${m.id}/disable`)}>停用成员</button>}</p>)}{owner && <button disabled={busy} onClick={()=>void action("/v1/members/invite")}>生成成员邀请码</button>}<h2>Agent 配对</h2><p>输入 CLI 显示的配对码，授权该 Agent 访问你的项目。当前授权全部项目；配对成功后需在 CLI 完成领取，领取丢失请重新配对。</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action("/v1/agents/pair/approve",{user_code:String(f.get("user_code")).trim(),project_ids:null});}}><input name="user_code" aria-label="Agent 配对码" required autoComplete="off"/><button disabled={busy}>批准配对</button></form>{agents.map(a=><p key={a.id}>{a.name} · {a.revoked_at ? "已撤销" : `有效至 ${a.expires_at}`} {!a.revoked_at && <button disabled={busy} onClick={()=>void action(`/v1/agents/${a.id}/revoke`)}>撤销 Agent</button>}</p>)}{message && <p role="status">{message}</p>}</section>;
 }
 
 
