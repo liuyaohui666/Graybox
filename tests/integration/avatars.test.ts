@@ -18,7 +18,7 @@ beforeAll(async()=>{app=await buildApp({pool:runtime,mode:'local'});});
 beforeEach(async()=>{await admin.query('DROP SCHEMA IF EXISTS graybox CASCADE');await migrate(admin);f=await seedDatabase(admin);});
 afterAll(async()=>{await app.close();await runtime.end();await admin.end();});
 test('safe human directory and own avatar persist, retry, replay migration and reset',async()=>{
- const people=(await req('GET','/v1/people')).data;expect(people).toHaveLength(3);expect(Object.keys(people[0]).sort()).toEqual(['avatar_data','id','name','role']);
+ const people=(await req('GET','/v1/people')).data;expect(people).toHaveLength(3);expect(Object.keys(people[0]).sort()).toEqual(['avatar_data','id','name']);
  const saved=await req('POST','/v1/profile/avatar',{avatar_data:avatar});expect(saved.status).toBe(200);expect(saved.data.id).toBe(f.humans[1]!.id);expect(saved.data.avatar_data).toBe(avatar);
  expect(await req('POST','/v1/profile/avatar',{avatar_data:avatar})).toEqual(saved);await migrate(admin);await migrate(admin);
  expect((await req('GET','/v1/people')).data.find((p:any)=>p.id===f.humans[1]!.id).avatar_data).toBe(avatar);
@@ -53,6 +53,6 @@ test('same runtime API saves cloud owner avatar and retains it after login',asyn
  try {const login={username:'owner',password:'secure password here!'};const result=await cloud.inject({method:'POST',url:'/v1/auth/redeem',payload:{code:invite.code,name:'Real name',...login}});const user=result.json().data;
  const saved=await cloud.inject({method:'POST',url:'/v1/profile/avatar',headers:{authorization:'Bearer '+user.token},payload:{avatar_data:avatar}});expect(saved.statusCode).toBe(200);
  const again=(await cloud.inject({method:'POST',url:'/v1/auth/login',payload:login})).json().data;
- const directory=await cloud.inject({method:'GET',url:'/v1/people',headers:{authorization:'Bearer '+again.token}});expect(directory.json().data[0]).toMatchObject({id:user.profile.id,name:'Real name',role:'owner',avatar_data:avatar});
+ const directory=await cloud.inject({method:'GET',url:'/v1/people',headers:{authorization:'Bearer '+again.token}});expect(directory.json().data[0]).toMatchObject({id:user.profile.id,name:'Real name',avatar_data:avatar});
  }finally{await cloud.close();}
 });

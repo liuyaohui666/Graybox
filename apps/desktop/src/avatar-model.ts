@@ -1,7 +1,7 @@
 export function displayName(person:{name:string},mode:'local'|'cloud'):string {
  return mode==='local'?({'Owner demonstration':'本地用户1','Member one demonstration':'本地用户2','Member two demonstration':'本地用户3'} as Record<string,string>)[person.name]??person.name:person.name;
 }
-export function personLabel(person:{name:string;role:string},mode:'local'|'cloud') {
+export function personLabel(person:{name:string;role?:string},mode:'local'|'cloud') {
  return displayName(person,mode);
 }
 export function avatarCrop(width:number,height:number) {

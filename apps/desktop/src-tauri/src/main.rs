@@ -26,9 +26,11 @@ fn allowed_request(path:&str, method:&str)->bool {
  }
  let segments:Vec<_>=route.split('/').collect();let id_ok=|id:&str|!id.is_empty()&&id.chars().all(|c|c.is_ascii_alphanumeric()||"_-".contains(c));
  match (method,segments.as_slice()) {
-  ("GET",["me"|"health"|"workspaces"|"people"|"tags"|"activity"|"projects"|"experiments"])=>true,
+  ("GET",["me"|"health"|"workspaces"|"people"|"notifications"|"tags"|"activity"|"projects"|"experiments"])=>true,
   ("GET",["projects"|"experiments",id])=>id_ok(id),
-  ("GET",["projects",id,"retrospectives"|"comments"])=>id_ok(id),
+  ("GET",["projects",id,"retrospectives"|"comments"|"agreement"])=>id_ok(id),
+  ("POST",["projects",id,"agreement"])=>query.is_none()&&id_ok(id),
+  ("POST",["notifications","read"])=>query.is_none(),
   ("POST",["commands"])=>true,
   ("POST",["profile","avatar"])=>query.is_none(),
   ("POST",["batches",id,"preview"|"undo"])=>id_ok(id),
@@ -109,6 +111,7 @@ fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![conn
  #[ignore = "requires explicitly configured local development API and credential file"]
  fn native_bridge_reads_real_local_api_without_exposing_tokens(){let profiles=local_profiles().expect("local profiles available"); assert_eq!(profiles.len(),3); let public=serde_json::to_value(&profiles).unwrap();assert!(public.as_array().unwrap().iter().all(|p|p.get("token").is_none()));let me=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/me".into(),"GET".into(),None)).unwrap();assert_eq!(me["data"]["kind"],"human");let workspaces=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/workspaces".into(),"GET".into(),None)).unwrap();let workspace=workspaces["data"][0]["id"].as_str().unwrap();let tags=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),format!("/v1/tags?workspace_id={}&q=%E6%B8%B8%E6%88%8F",workspace),"GET".into(),None)).unwrap();assert!(tags["data"].is_array());}
  #[test] fn library_queries_allow_encoding_only_in_values(){assert!(allowed_request("/v1/tags?workspace_id=abc-123&q=%E6%B8%B8%E6%88%8F","GET"));assert!(allowed_request("/v1/projects?tag=Game%20Art","GET"));for p in ["/v1/tags?q=%ZZ","/v1/tags?q=%00","/v1/projects%2f..%2fsecret","/v1/projects/a/unknown"] {assert!(!allowed_request(p,"GET"));}assert!(!allowed_request("/v1/tags","POST"));}
+ #[test] fn social_routes_are_precise(){for p in ["/v1/notifications","/v1/notifications?before=abc-123","/v1/projects/abc/agreement"]{assert!(allowed_request(p,"GET"));}for p in ["/v1/notifications/read","/v1/projects/abc/agreement"]{assert!(allowed_request(p,"POST"));}for (p,m) in [("/v1/notifications/read","GET"),("/v1/notifications","POST"),("/v1/projects/abc/agreement/extra","POST"),("/v1/projects/abc","POST")]{assert!(!allowed_request(p,m));}}
  #[test] fn avatar_routes_are_precise(){assert!(allowed_request("/v1/people","GET"));assert!(allowed_request("/v1/profile/avatar","POST"));assert!(!allowed_request("/v1/people","POST"));assert!(!allowed_request("/v1/profile/avatar","GET"));assert!(!allowed_request("/v1/profile/avatar/other","POST"));}
  #[test] fn auth_routes_are_precise(){assert!(allowed_request("/v1/auth/me","GET"));assert!(allowed_request("/v1/agents/pair/approve","POST"));assert!(!allowed_request("/v1/auth/login","GET"));assert!(!allowed_request("/v1/members/invite","GET"));assert!(!allowed_request("/v1/agents/a/revoke/extra","POST"));assert!(!allowed_request("/v1/auth/pair/poll","POST"));assert!(!allowed_request("/v1/../admin","GET"));}
  #[test] fn endpoint_rejects_credentials_paths_and_insecure_urls(){assert_eq!(trusted_origin("https://example.com/").unwrap(),"https://example.com");for value in ["http://example.com","https://user:pass@example.com","https://example.com/v1","https://example.com?secret=x","file:///secret"] {assert!(trusted_origin(value).is_err());}}

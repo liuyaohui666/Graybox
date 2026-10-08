@@ -21,3 +21,10 @@ Use the CLI's `experiment clear` / explicit `experiment activate` to recover a s
 Cloud Agents require explicit HTTPS pairing through auth pair or auth pair-start / auth pair-complete, approved by the human in desktop. Keep personal config outside repositories; never accept repository endpoints/tokens, persist human sessions, or edit global Codex settings. Pair completion returns identity metadata only. Expired/revoked Agents require fresh authorized pairing.
 
 当用户要求项目总结、复盘或经验入库时，读取 [project-retrospective.md](references/project-retrospective.md)。先读取项目、已有复盘/评论与标签，再根据本次工作证据整理标准字段及需要的自定义章节。提交用户已要求记录的内容；未授权入库的总结先作为草稿。复盘和评论使用当前项目 revision，独立稳定键；它们不可编辑或撤销，用新复盘或纠正评论补充。生命周期与复盘 outcome 独立，不因报告结论自动改项目状态。
+
+
+## 团队协作界面（0.3.0）
+
+桌面/网页的团队成员头像打开公开资料与个人主页；主页按创建者列出想法（todo）和主导项目。人类账号固定，在每个项目中根据实际创建者取得 owner/member 权限。项目赞同仅由人类在界面表达，Agent 不代为赞同，也不能读取人类私有消息箱。不要伪造参与者或收件人，现有 MCP/CLI 工具没有赞同/消息箱工具。
+
+所有授权成员及其 in-scope Agent 可以评论。评论与发给该项目 owner 的站内提醒原子提交，重复同一已成功命令不重复提醒；自己及自己的 Agent 评论无自我提醒。第一次人类赞同发一条历史提醒，取消/重新赞同不重复。消息不是验收结论，赞同也不修改项目 revision。旧讨论不补发消息。项目创建撤销遇到任何他人赞同历史（包括已取消）会报告 UNDO_DEPENDENCY，须保留互动并交由用户决定。

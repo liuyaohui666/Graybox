@@ -2,14 +2,15 @@ import React, {useEffect,useRef,useState,useSyncExternalStore} from 'react';
 import {DraftWriteAttempt,navigationBlocked} from './library-write-guard.ts';
 import {writeSafety} from './write-safety.ts';
 import {request} from './platform.ts';
+import {ProjectAgreement} from './team-social.tsx';
 import {Attribution} from './avatars.tsx';
 import type {Project,Experiment} from './model.ts';
 import {addTag,filterProjects,prioritizedIdeas,lifecycleNames,lifecycleLabel,priorityNames,outcomeNames,outcomeLabel,reportSections,reportPayload,normalizeTag} from './project-library-model.ts';
 interface Report {author_id?:string;id:string;project_id:string;title:string;outcome:string;author_name:string;created_at:string;custom_sections:{title:string;content:string}[];[key:string]:unknown}
 interface Comment {author_id?:string;id:string;body:string;author_name:string;created_at:string;agent_id?:string|null}
 interface Draft {name:string;description:string;lifecycle:string;priority:string;tags:string[];revision:number}
-interface Props {profile:string;page:'home'|'projects';projects:Project[];experiments:Experiment[];createdId:string;busy:boolean;setBusy:(value:boolean)=>void;send:(type:string,payload:object,revision?:number)=>Promise<unknown>;refresh:()=>Promise<void>;openExperiment:(id:string)=>void;tagFilter?:string;openTag?:(tag:string)=>void}
-export function ProjectLibrary({profile,page,projects,experiments,createdId,busy,setBusy,send,refresh,openExperiment,tagFilter='',openTag}:Props) {
+interface Props {profile:string;page:'home'|'projects';projects:Project[];experiments:Experiment[];createdId:string;busy:boolean;setBusy:(value:boolean)=>void;send:(type:string,payload:object,revision?:number)=>Promise<unknown>;refresh:()=>Promise<void>;openExperiment:(id:string)=>void;tagFilter?:string;openTag?:(tag:string)=>void;backLabel?:string;onBack?:()=>void}
+export function ProjectLibrary({profile,page,projects,experiments,createdId,busy,setBusy,send,refresh,openExperiment,tagFilter='',openTag,backLabel,onBack}:Props) {
   const pendingWrite=useSyncExternalStore(writeSafety.subscribe,writeSafety.snapshot,()=>null);
   const [selected,setSelected]=useState(''), [project,setProject]=useState<Project|null>(null), [draft,setDraft]=useState<Draft|null>(null);
   const [reports,setReports]=useState<Report[]>([]),[comments,setComments]=useState<Comment[]>([]),[recent,setRecent]=useState<Report[]>([]);
@@ -31,8 +32,8 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     if(!selected)return;
     setLoading(true); const g=generation.current;
     void load(selected,true).catch(e=>{if(g===generation.current)setError(e.message);}).finally(()=>{if(g===generation.current)setLoading(false);});
-    const timer=setInterval(()=>{if(!writing.current)void load(selected).catch(e=>{if(g===generation.current)setError(e.message);});},15000);
-    return()=>{generation.current++;clearInterval(timer);};
+    const update=()=>{if(!writing.current)void load(selected).catch(e=>{if(g===generation.current)setError(e.message);});};const timer=setInterval(update,15000);window.addEventListener('focus',update);
+    return()=>{generation.current++;clearInterval(timer);window.removeEventListener('focus',update);};
   },[selected,profile]);
   useEffect(()=>{setSelected('');setSearch('');setRecent([]);},[profile]);
   useEffect(()=>{if(createdId)setSelected(createdId);},[createdId]);
@@ -55,15 +56,16 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     }catch(e){if(active.current.profile===identity && active.current.id===id)setError((e as Error).message);return false;}
     finally {attempt.current.finish(!!writeSafety.snapshot());writing.current=false;setBusy(false);}
   }
-  const card=(p:Project)=><button className="project-card" key={p.id} onClick={()=>setSelected(p.id)}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>项目 owner：<Attribution id={p.owner_id ?? p.creator_id} name={p.owner_name ?? p.creator_name} detail/> · 你在此项目：{p.project_role ?? (p.can_edit?"owner":"member")}</small></button>;
+  const card=(p:Project)=><button className="project-card" key={p.id} disabled={locked} onClick={()=>{if(!blocked())setSelected(p.id);}}><h3>{p.name}</h3><p>{p.description||'尚未填写说明'}</p><span>{lifecycleLabel(p.lifecycle)} · 优先级{priorityNames[p.priority]}</span><div className="library-tags">{p.tags.map(t=><span key={t} className="status">{t}</span>)}</div><small>项目 owner：<Attribution id={p.owner_id ?? p.creator_id} name={p.owner_name ?? p.creator_name} detail/> · 你在此项目：{p.project_role ?? (p.can_edit?"owner":"member")}</small></button>;
   return <div className="project-library">
     {error&&<div className="error" role="alert"><span>{error}</span><button disabled={busy} onClick={()=>{if(selected)void load(selected).catch(e=>setError(e.message));else void refresh().catch(e=>setError(e.message));}}>重新读取最新数据</button></div>}
     {notice&&<p className="notice" role="status">{notice}</p>}
     {selected?<>
-      <button className="text-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked())setSelected('');}}>← 返回{page==='home'?'首页':'项目库'}</button>
+      <button className="text-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked()){if(onBack)onBack();else setSelected('');}}}>← 返回{backLabel??(page==='home'?'首页':'项目库')}</button>
       {loading&&<p className="empty">正在读取项目…</p>}
       {project&&draft&&<>
         <div className="section-heading"><h2>{project.name}</h2><span>项目 owner：<Attribution id={project.owner_id ?? project.creator_id} name={project.owner_name ?? project.creator_name} detail/> · 你在此项目：{project.project_role ?? (project.can_edit?"owner":"member")} · 修订 {project.revision}</span></div>
+        <ProjectAgreement profile={profile} projectId={project.id} busy={busy} setBusy={setBusy}/>
         <p>项目进度：{lifecycleLabel(project.lifecycle)} · 优先级：{priorityNames[project.priority]}</p>
         {project.can_edit?<form className="library-form" onSubmit={e=>{e.preventDefault();void write('project_update',{id:project.id,name:draft.name.trim(),description:draft.description,lifecycle:draft.lifecycle,priority:draft.priority,tags:draft.tags},draft.revision,()=>{dirty.current=false;});}}>
           <fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>项目名称<input required maxLength={120} value={draft.name} onChange={e=>change({name:e.target.value})}/></label>
@@ -85,7 +87,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
         {reports.length===0&&<p className="empty compact">尚无经验报告。</p>}
         {reports.map(r=><article key={r.id} className="library-report"><h3>{r.title} <span className="status">{outcomeLabel(r.outcome)}</span></h3><small><Attribution id={r.author_id} name={r.author_name} agentId={r.agent_id as string|null}/> · {stamp(r.created_at)}</small>{Object.entries(reportSections).map(([key,label])=><section key={key}><h4>{label}</h4><p className="prose">{String(r[key]||'尚未填写')}</p></section>)}{r.custom_sections.map((s,i)=><section key={i}><h4>{s.title}</h4><p className="prose">{s.content}</p></section>)}</article>)}
         <details className="library-report"><summary>Codex 连接信息</summary><p>项目 ID：<code>{project.id}</code></p><p>空间 ID：<code>{project.workspace_id}</code></p></details>
-        <div className="library-tags">{project.tags.map(t=><button key={t} disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked()){openTag?.(t);setSelected('');}}}>查看标签“{t}”的项目</button>)}</div>
+        <div className="library-tags">{project.tags.map(t=><button key={t} disabled={busy||!!pendingWrite||!openTag} onClick={()=>{if(!blocked())openTag?.(t);}}>查看标签“{t}”的项目</button>)}</div>
         <h2 className="spaced">团队讨论</h2>{comments.map(c=><article key={c.id} className="library-comment"><small><Attribution id={c.author_id} name={c.author_name} agentId={c.agent_id}/> · {stamp(c.created_at)}</small><p className="prose">{c.body}</p></article>)}
         <form className="library-form" onSubmit={e=>{e.preventDefault();const form=e.currentTarget;void write('comment_create',{project_id:project.id,body:String(new FormData(form).get('body')??'').trim()},project.revision,()=>form.reset());}}><fieldset disabled={locked} style={{display:"grid",gap:16,border:0,padding:0,margin:0,minWidth:0}}><label>添加评论<textarea name="body" required maxLength={12000} rows={3}/></label></fieldset><button className="primary" disabled={busy||(!!pendingWrite&&pendingWrite.operation!=='comment_create')}>发送评论</button></form>
         <details className="library-report"><summary>历史实验记录（{experiments.filter(e=>e.project_id===project.id).length}）</summary>{experiments.filter(e=>e.project_id===project.id).map(e=><button className="experiment-row" key={e.id} disabled={locked} onClick={()=>{if(!blocked())openExperiment(e.id);}}><span>{e.name} · v{e.version}</span><span>查看实验与证据 →</span></button>)}</details>

@@ -62,7 +62,7 @@ export async function request<T>(profileId: string, path: string, method = "GET"
   if (!isTauri()) browserOrigin(c.mode);
   const requestBearer = bearer;
   const revision = sessionRevision;
-  const write = method === "POST" && (path === "/v1/commands" || /^\/v1\/batches\/[^/]+\/undo$/.test(path)) ? writeSafety.begin(profileId,path,body,revision) : null;
+  const write = method === "POST" && (path === "/v1/commands" || path === "/v1/notifications/read" || /^\/v1\/projects\/[^/]+\/agreement$/.test(path) || /^\/v1\/batches\/[^/]+\/undo$/.test(path)) ? writeSafety.begin(profileId,path,body,revision) : null;
   try {
   let result: { data?: T; error?: {code: string; message: string} };
   if (isTauri()) result = await invoke("api_request", { profileId, path, method, body: body ?? null });
@@ -81,6 +81,7 @@ export async function request<T>(profileId: string, path: string, method = "GET"
   if (result.error) {
     if (result.error.code === "UNAUTHORIZED" && c.mode === "cloud" && requestBearer === bearer && revision === sessionRevision) {
       bearer = undefined; if (current) current.profile = undefined;
+      sessionRevision++;
       window.dispatchEvent?.(new Event("graybox-session-ended"));
     }
     throw new ApiError(result.error.code, result.error.message);

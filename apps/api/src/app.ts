@@ -45,6 +45,10 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
   app.get('/v1/me',async request=> {const p=principal(request);return {data:{credential_id:p.id,human_id:p.human_id,agent_id:p.agent_id,kind:p.kind,project_ids:p.project_ids}};});
   app.get('/v1/workspaces',async()=>({data:await service.workspaces()}));
   app.get('/v1/people',async r=>({data:await service.people(principal(r))}));
+  app.get<{Params:{id:string}}>('/v1/projects/:id/agreement',async r=>({data:await service.agreement(principal(r),id(r.params.id))}));
+  app.post<{Params:{id:string}}>('/v1/projects/:id/agreement',async r=>({data:await service.agreement(principal(r),id(r.params.id),r.body??null)}));
+  app.get('/v1/notifications',async r=>({data:await service.notifications(principal(r),r.query)}));
+  app.post('/v1/notifications/read',async r=>({data:await service.readNotifications(principal(r),r.body)}));
   app.post('/v1/profile/avatar',async r=>({data:await service.setAvatar(principal(r),r.body)}));
   app.get<{Querystring:{tag?:string}}>('/v1/projects',async request=>({data:await service.list(principal(request),'projects',undefined,request.query.tag)}));
   app.get<{Querystring:{workspace_id?:string;q?:string}}>('/v1/tags',async request=>({data:await service.tags(principal(request),request.query.workspace_id?id(request.query.workspace_id):undefined,request.query.q)}));

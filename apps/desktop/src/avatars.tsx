@@ -1,13 +1,17 @@
 import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
 import {request,sessionGeneration,type Profile} from './platform.ts';
 import {AvatarGeneration,displayName,personLabel,prepareAvatar} from './avatar-model.ts';
-export interface Person extends Profile {avatar_data?:string|null}
-export const PeopleContext=createContext<{people:Person[];mode:'local'|'cloud';refresh:()=>Promise<void>}>({people:[],mode:'cloud',refresh:async()=>{}});
+export interface Person extends Omit<Profile,'role'> {role?:string;avatar_data?:string|null}
+export const PeopleContext=createContext<{people:Person[];mode:'local'|'cloud';error?:string;refresh:()=>Promise<void>}>({people:[],mode:'cloud',refresh:async()=>{}});
 export function PeopleProvider({profile,mode,children}:{profile:string;mode:'local'|'cloud';children:React.ReactNode}) {
- const [people,setPeople]=useState<Person[]>([]),generation=useRef(0),active=useRef(profile),reads=useRef(0);active.current=profile;
- async function refresh(){const id=profile,g=generation.current,r=++reads.current;if(!id)return;const value=await request<Person[]>(id,'/v1/people');if(active.current===id&&generation.current===g&&reads.current===r)setPeople(value);}
- useEffect(()=>{generation.current++;setPeople([]);void refresh().catch(()=>{});const timer=setInterval(()=>void refresh().catch(()=>{}),15000);return()=>{generation.current++;clearInterval(timer);};},[profile]);
- return <PeopleContext.Provider value={{people,mode,refresh}}>{children}</PeopleContext.Provider>;
+ const [people,setPeople]=useState<Person[]>([]),[error,setError]=useState(''),generation=useRef(0),active=useRef(profile),reads=useRef(0);active.current=profile;
+ async function refresh(){const id=profile,g=generation.current,r=++reads.current,s=sessionGeneration();if(!id)return;
+  const current=()=>active.current===id&&generation.current===g&&reads.current===r&&sessionGeneration()===s;
+  try{const value=await request<Person[]>(id,'/v1/people');if(current()){setPeople(value);setError('');}}
+  catch(e){if(current())setError((e as Error).message);throw e;}
+ }
+ useEffect(()=>{generation.current++;setPeople([]);setError('');void refresh().catch(()=>{});const update=()=>void refresh().catch(()=>{});const timer=setInterval(update,15000);window.addEventListener('focus',update);return()=>{generation.current++;clearInterval(timer);window.removeEventListener('focus',update);};},[profile]);
+ return <PeopleContext.Provider value={{people,mode,error,refresh}}>{children}</PeopleContext.Provider>;
 }
 export function Avatar({person,mode='cloud'}:{person?:Person;mode?:'local'|'cloud'}) {
  const [broken,setBroken]=useState<string|null>(null),name=person?displayName(person,mode):'历史记录未注明',label=person?personLabel(person,mode):name;

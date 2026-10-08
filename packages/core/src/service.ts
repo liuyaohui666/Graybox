@@ -1,6 +1,7 @@
 import { createHash,createHmac,randomBytes,randomUUID,timingSafeEqual } from 'node:crypto';
 import type { Pool,PoolClient } from 'pg';
 import {z} from 'zod';
+import {agreementState,inboxPage,notifyOwner} from './social.ts';
 import {validAvatar} from './avatar.ts';
 import { commandSchema,undoSchema,type Principal,type Entity } from '../../contracts/src/index.ts';
 
@@ -28,7 +29,42 @@ export class Service {
   async people(p:Principal) {
     return this.transaction(p,async(c,current)=>{
       if(current.kind!=='human')fail('FORBIDDEN','Human profile required',403);
-      return (await c.query('SELECT id,name,role,avatar_data FROM graybox.users ORDER BY role,name,id')).rows;
+      return (await c.query('SELECT id,name,avatar_data FROM graybox.users WHERE disabled_at IS NULL ORDER BY name,id')).rows;
+    });
+  }
+  async agreement(p:Principal,id:string,body?:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      if(body!==undefined && current.kind!=='human')fail('FORBIDDEN','Only a human can agree',403);
+      const project=await this.entity(c,'project',id,body!==undefined,current);
+      if(body!==undefined) {
+        const parsed=z.strictObject({agreed:z.boolean()}).safeParse(body);
+        if(!parsed.success)return fail('VALIDATION','Agreement requires a boolean state',400);
+        if(!project.creator_id || project.creator_id===current.human_id)fail('FORBIDDEN','Cannot agree with your own or unassigned project',403);
+        // False before a first agreement is a no-op. Inactive history after a true remains persistent.
+        if(parsed.data.agreed) {
+          await c.query('INSERT INTO graybox.project_agreements(project_id,user_id,active) VALUES($1,$2,true) ON CONFLICT(project_id,user_id) DO UPDATE SET active=true,updated_at=now()',[id,current.human_id]);
+          await notifyOwner(c,current,project,'agreement');
+        } else await c.query('UPDATE graybox.project_agreements SET active=false,updated_at=now() WHERE project_id=$1 AND user_id=$2',[id,current.human_id]);
+      }
+      return agreementState(c,current,project);
+    });
+  }
+  async notifications(p:Principal,query:unknown={}) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human inbox required',403);
+      const parsed=z.strictObject({before:z.uuid().optional()}).safeParse(query);
+      if(!parsed.success)return fail('VALIDATION','Invalid inbox cursor',400);
+      if(parsed.data.before && !(await c.query('SELECT id FROM graybox.notifications WHERE id=$1 AND recipient_id=$2 AND ($3::uuid[] IS NULL OR project_id=ANY($3::uuid[]))',[parsed.data.before,current.human_id,current.project_ids])).rowCount)fail('NOT_FOUND','Inbox cursor not found',404);
+      return inboxPage(c,current,parsed.data.before);
+    });
+  }
+  async readNotifications(p:Principal,body:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human inbox required',403);
+      const parsed=z.strictObject({ids:z.array(z.uuid()).max(100)}).safeParse(body);
+      if(!parsed.success)return fail('VALIDATION','Provide up to 100 visible notification ids',400);
+      await c.query('UPDATE graybox.notifications SET read_at=coalesce(read_at,now()) WHERE recipient_id=$1 AND id=ANY($2::uuid[]) AND ($3::uuid[] IS NULL OR project_id=ANY($3::uuid[]))',[current.human_id,parsed.data.ids,current.project_ids]);
+      return inboxPage(c,current);
     });
   }
   async setAvatar(p:Principal,body:unknown) {
@@ -189,6 +225,7 @@ export class Service {
         const id=randomUUID(),{project_id,...data}=payload;
         const table=type==='comment_create'?'comments':'retrospectives';
         const child=(await c.query(`INSERT INTO graybox.${table}(id,project_id,batch_id,author_id,agent_id,${type==='comment_create'?'body':'data'}) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[id,project_id,batch_id,p.human_id,p.agent_id,type==='comment_create'?(data as {body:string}).body:data])).rows[0];
+        if(type==='comment_create')await notifyOwner(c,p,before,'comment',id);
         const parent=await this.save(c,'project',before,this.business(before,'project'));
         const author=(await c.query('SELECT name FROM graybox.users WHERE id=$1',[p.human_id])).rows[0];
         result=normalize({...Object.fromEntries(Object.entries(child).filter(([k])=>k!=='data')),...child.data,revision:1,author_name:author.name,project_revision:parent.revision}) as Entity;
@@ -261,6 +298,7 @@ export class Service {
       if(!change.before) {
         const checks: Array<[string,string,unknown[]]>=[];
         if(change.entity_type==='project' && (await c.query('SELECT id FROM graybox.comments WHERE project_id=$1 UNION ALL SELECT id FROM graybox.retrospectives WHERE project_id=$1',[change.entity_id])).rowCount) fail('UNDO_DEPENDENCY','Project has immutable comments or retrospectives; preserve the project');
+        if(change.entity_type==='project' && (await c.query('SELECT user_id FROM graybox.project_agreements WHERE project_id=$1',[change.entity_id])).rowCount) fail('UNDO_DEPENDENCY','Project has external agreement history; preserve the project');
         if(change.entity_type==='project') checks.push(['experiments','project_id',[change.entity_id]],['experiment_series','project_id',[change.entity_id]]);
         if(change.entity_type==='series') checks.push(['experiments','series_id',[change.entity_id]]);
         if(change.entity_type==='experiment') {

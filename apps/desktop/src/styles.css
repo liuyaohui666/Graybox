@@ -1097,3 +1097,18 @@ textarea::placeholder {
 .avatar-menu button:hover:not(:disabled) { background:#eef2eb; }
 .avatar-menu p { padding:8px 10px; overflow-wrap:anywhere; }
 .management .person-avatar { margin-right:8px; }
+
+.team-space { margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.member-strip { display:flex; flex-wrap:wrap; gap:18px; margin-top:16px; }
+.member-entry { display:flex; flex-direction:column; align-items:center; gap:8px; max-width:110px; padding:10px; border-radius:10px; border:1px solid transparent; background:transparent; }
+.member-entry:hover:not(:disabled) { border-color:var(--line); background:var(--panel); }
+.member-name { overflow-wrap:anywhere; }
+.member-entry .person-avatar, .member-identity .person-avatar { width:46px; height:46px; min-width:46px; font-size:20px; }
+.member-identity { display:flex; align-items:center; gap:14px; margin:22px 0; }
+.notification-entry { display:inline-flex; align-items:center; gap:6px; flex:none; margin-left:auto; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); font-size:13px; }
+.unread-badge { border-radius:20px; padding:2px 6px; background:var(--accent,#3d6145); color:white; font-size:11px; }
+.inbox-list .unread { border-left:3px solid var(--accent,#3d6145); }
+.agreement-control { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
+.agreement-button { padding:9px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.agreement-button[aria-pressed="true"] { color:#315637; background:#e9f0e5; border-color:#a4b79c; }
+@media (max-width:700px) { .topbar { gap:6px; } .notification-entry { padding:7px 8px; } .inbox-list .library-comment { padding:14px; } .member-strip { gap:8px; } .member-entry { max-width:92px; } .inbox-list .library-tags, .inbox-list small { overflow-wrap:anywhere; } .member-home .member-identity h2 { font-size:20px; } .inbox-list + .secondary { max-width:100%; } }

@@ -46,3 +46,10 @@ it('ignores failures and successes after profile changes', async () => {
   await refresh.run('p', () => identity, async () => { identity = 'q'; return 'old'; }, value => seen.push(value), error => seen.push(error.message));
   expect(seen).toEqual([]);
 });
+it('mutation invalidation prevents an older polling response from overwriting a confirmed agreement',async()=>{
+ const reads=new LatestProfileRefresh();let resolve!:(value:boolean)=>void;
+ const old=new Promise<boolean>(yes=>{resolve=yes;}),seen:boolean[]=[];
+ const pending=reads.run('a:idea:1',()=> 'a:idea:1',()=>old,value=>seen.push(value),()=>{});
+ reads.invalidate();seen.push(true);resolve(false);await pending;expect(seen).toEqual([true]);
+ await reads.run('a:idea:1',()=> 'a:idea:1',async()=>true,value=>seen.push(value),()=>{});expect(seen).toEqual([true,true]);
+});

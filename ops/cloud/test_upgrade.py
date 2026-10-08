@@ -40,9 +40,9 @@ class UpgradeTests(unittest.TestCase):
     def test_migration_files_are_sorted_and_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            for name in ['003_project_library.sql', '001_m1.sql', '002_cloud_auth.sql']:
+            for name in ['005_team_social.sql', '004_personal_avatars.sql', '003_project_library.sql', '001_m1.sql', '002_cloud_auth.sql']:
                 (root / name).write_text('SELECT 1;', encoding='utf8')
-            self.assertEqual([p.name for p in upgrade.migration_files(root)], ['001_m1.sql', '002_cloud_auth.sql', '003_project_library.sql'])
+            self.assertEqual([p.name for p in upgrade.migration_files(root)], ['001_m1.sql', '002_cloud_auth.sql', '003_project_library.sql', '004_personal_avatars.sql', '005_team_social.sql'])
             (root / 'anything.sql').write_text('SELECT 2;', encoding='utf8')
             with self.assertRaises(ValueError):
                 upgrade.migration_files(root)

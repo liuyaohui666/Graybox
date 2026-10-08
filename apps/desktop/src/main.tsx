@@ -14,10 +14,12 @@ import {
 import "./styles.css";
 import {Attribution,PeopleProvider,SidebarAccount} from "./avatars.tsx";
 import { LibraryNavigation, LatestProfileRefresh } from "./library-app-state.ts";
+import {TeamSpace,MemberPage} from "./team-space.tsx";
+import {SocialProvider,NotificationEntry,Inbox} from "./team-social.tsx";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 
-type Page = "home" | "projects" | "experiments" | "activity";
+type Page = "home" | "projects" | "experiments" | "activity" | "member" | "messages";
 type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
 const typeNames: Record<string, string> = {
   git: "Git 记录",
@@ -42,6 +44,7 @@ function App() {
   const pendingWrite = useSyncExternalStore(writeSafety.subscribe, writeSafety.snapshot);
   const [people, setPeople] = useState<Profile[]>([]),
     [profile, setProfile] = useState("");
+  const [memberId,setMemberId]=useState(""),[socialProject,setSocialProject]=useState("");
   const [createdProject, setCreatedProject] = useState("");
   const [libraryTag,setLibraryTag]=useState("");
   const refreshState = useRef(new LatestProfileRefresh()), mutationLock = useRef(false);
@@ -81,12 +84,14 @@ function App() {
     const generation = navigation.current.accept(busy,mutationLock.current,writeSafety.snapshot(),completedWrite);
     if (generation === null) return false;
     setNavigationGeneration(generation);
+    setSocialProject("");
     setCreatedProject("");
     selection.current = "";
     setDetail(null);
     setPage(next);
     return true;
   }
+  const openLibraryTag=(tag:string)=>{if(navigate("projects"))setLibraryTag(tag);};
   async function refresh(id = profile) {
     if (!id) return;
     await refreshState.current.run(id, () => identity.current, () => Promise.all([
@@ -124,6 +129,7 @@ function App() {
     setDialog(null);
     setUndo(null);
     setProjectFilter("");
+    setSocialProject("");
     setCreatedProject("");
     setLibraryTag("");
     setWorkspaces([]);
@@ -318,7 +324,7 @@ function App() {
   const projectName = (id: string) =>
     projects.find((p) => p.id === id)?.name ?? "项目";
   return (
-    <PeopleProvider profile={profile} mode={mode}><div className="shell">
+    <PeopleProvider profile={profile} mode={mode}><SocialProvider profile={profile} setBusy={setBusy}><div className="shell">
       <aside className="sidebar">
         <div className="brand">
           <span className="brandmark">▧</span>
@@ -373,9 +379,12 @@ function App() {
                 projects: "项目",
                 experiments: "实验",
                 activity: "活动记录",
+                member: "成员主页",
+                messages: "我的消息",
               }[page]
             }
           </div>
+          <NotificationEntry locked={busy||!!pendingWrite} open={()=>navigate("messages")}/>
           <span className="local-status">
             <span className="live-dot" />
             {mode === "cloud" ? "云端团队 · 数据保存在团队服务器" : "本地开发 · 数据保存在此电脑"}
@@ -391,6 +400,8 @@ function App() {
                     projects: "YOUR PROJECTS",
                     experiments: "EXPERIMENT LOG",
                     activity: "ACTIVITY TRAIL",
+                    member: "MEMBER HOME",
+                    messages: "YOUR INBOX",
                   }[page]
                 }
               </div>
@@ -401,6 +412,8 @@ function App() {
                     projects: "项目",
                     experiments: "实验记录",
                     activity: "谁在什么时候，改变了什么。",
+                    member: "成员主页",
+                    messages: "我的消息",
                   }[page]
                 }
               </h1>
@@ -411,6 +424,8 @@ function App() {
                     projects: "一起积累创意、项目经验与讨论。",
                     experiments: "保存不同版本，也保留当时的目标与判断。",
                     activity: "变更与撤销都留在这里。",
+                    member: "查看成员的想法与主导项目。",
+                    messages: "来自团队的赞同与评论。",
                   }[page]
                 }
               </p>
@@ -458,7 +473,11 @@ function App() {
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
-                {(page === "home" || page === "projects") && <ProjectLibrary key={navigationGeneration} profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={(tag)=>{if(navigate("projects"))setLibraryTag(tag);}} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
+                {(page === "home" || page === "projects") && <TeamSpace projects={projects} locked={busy||!!pendingWrite} openMember={id=>{if(navigate("member"))setMemberId(id);}}/>}
+                {page === "member" && !socialProject && <MemberPage id={memberId} projects={projects} locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}} back={()=>navigate("home")}/>}
+                {page === "messages" && !socialProject && <Inbox locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}}/>}
+                {(page === "member" || page === "messages") && !!socialProject && <ProjectLibrary key={`${navigationGeneration}:${socialProject}`} profile={profile} page="projects" projects={projects} experiments={experiments} createdId={socialProject} busy={busy} setBusy={setBusy} send={send} refresh={()=>refresh()} tagFilter={libraryTag} openTag={openLibraryTag} backLabel={page==="member"?"成员主页":"消息箱"} onBack={()=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject("");}} openExperiment={id=>{if(navigate("experiments"))void showExperiment(id);}}/>}
+                {(page === "home" || page === "projects") && <ProjectLibrary key={navigationGeneration} profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={openLibraryTag} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
                 {page === "experiments" && (
                   <div className="filters">
                     <input
@@ -723,7 +742,7 @@ function App() {
             <span>
               GRAYBOX <b>·</b> 留下结果，也留下为什么。
             </span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.2.1 · 自动刷新 15 秒</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.0 · 自动刷新 15 秒</span>
           </footer>
         </div>
       </main>
@@ -940,7 +959,7 @@ function App() {
           </button>
         </div>
       </dialog>
-    </div></PeopleProvider>
+    </div></SocialProvider></PeopleProvider>
   );
 }
 createRoot(document.getElementById("root")!).render(

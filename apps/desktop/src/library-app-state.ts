@@ -9,6 +9,7 @@ export class LibraryNavigation {
 }
 export class LatestProfileRefresh {
   private sequence = 0;
+  invalidate() { this.sequence++; }
   async run<T>(profile: string, identity: () => string, load: () => Promise<T>, apply: (value: T) => void, fail: (error: Error) => void) {
     const sequence = ++this.sequence;
     const current = () => identity() === profile && sequence === this.sequence;

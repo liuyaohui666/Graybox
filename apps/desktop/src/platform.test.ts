@@ -68,3 +68,19 @@ it("a delayed successful login cannot overwrite a newer session",async()=>{
  vi.stubGlobal("fetch",vi.fn(async()=>{calls++;if(calls===1)return new Promise(resolve=>{resolveOld=resolve;});return response("new");}));
  const p=await import("./platform.ts");const old=p.authenticate("login",{});await vi.waitFor(()=>expect(resolveOld).toBeDefined());await p.authenticate("login",{});resolveOld?.(response("old"));await expect(old).rejects.toThrow("会话已变更");expect((await p.profiles())[0].id).toBe("new");
 });
+it.each(['/v1/projects/idea/agreement','/v1/notifications/read'])('social write %s retains original body on unknown outcome and blocks navigation/logout/new targets',async path=>{
+ let result:'offline'|'ok'|'forbidden'='offline';const calls:string[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(_url:string,init:RequestInit)=>{calls.push(String(init.body));if(result==='offline')throw Error('connection lost');return {headers:new Headers({'content-type':'application/json'}),json:async()=>result==='ok'?{data:{ok:true}}:{error:{code:'FORBIDDEN',message:'denied'}}};}));
+ const p=await import('./platform.ts'),{writeSafety}=await import('./write-safety.ts');
+ const body=path.endsWith('agreement')?{agreed:true}:{ids:['visible']};
+ await expect(p.request('a',path,'POST',body)).rejects.toThrow('connection lost');expect(writeSafety.snapshot()?.path).toBe(path);
+ await expect(p.logout()).rejects.toThrow('未确认');
+ await expect(p.request('b',path,'POST',body)).rejects.toThrow('未确认');expect(calls).toHaveLength(1);
+ result='forbidden';await expect(p.request('a',path,'POST',body)).rejects.toThrow('denied');expect(writeSafety.snapshot()?.ambiguous).toBe(true);
+ result='ok';await p.request('a',path,'POST',body);expect(writeSafety.snapshot()).toBeNull();expect(new Set(calls).size).toBe(1);
+});
+it('first definitive social rejection allows recovery while expired session increments its generation',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>({headers:new Headers({'content-type':'application/json'}),json:async()=>({error:{code:'UNAUTHORIZED',message:'expired'}})})));
+ const p=await import('./platform.ts'),{writeSafety}=await import('./write-safety.ts');const before=p.sessionGeneration();
+ await expect(p.request('a','/v1/projects/idea/agreement','POST',{agreed:true})).rejects.toThrow('expired');expect(writeSafety.snapshot()).toBeNull();expect(p.sessionGeneration()).toBeGreaterThan(before);
+});

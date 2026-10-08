@@ -9,7 +9,7 @@ export class WriteSafety {
     const signature = JSON.stringify({profile,path,body});
     if (this.pending && (this.pending.busy || this.pending.signature !== signature || this.pending.credentialRevision !== credentialRevision))
       throw new Error("上次写入结果尚未确认。请使用原操作重试；重新登录后须先核对最新记录，再解除未确认标记。");
-    this.pending = {signature,profile,path,operation: typeof body === "object" && body && "type" in body ? String(body.type) : "批次撤销", credentialRevision,busy:true,ambiguous:this.pending?.ambiguous ?? false};
+    this.pending = {signature,profile,path,operation: typeof body === "object" && body && "type" in body ? String(body.type) : path.endsWith("/agreement") ? "赞同" : path === "/v1/notifications/read" ? "消息已读" : "批次撤销", credentialRevision,busy:true,ambiguous:this.pending?.ambiguous ?? false};
     this.notify(); return this.pending;
   }
   finish(attempt: PendingWrite, success: boolean, definitive = false) {
