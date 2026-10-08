@@ -8,11 +8,7 @@ $runtimePath = Join-Path $repoRoot '.local/runtime.json'
 if (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'PG_VERSION'))) { throw 'The isolated local database has not been initialized. See README.md.' }
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.env'))) { throw 'Missing local .env. See README.md.' }
 if (-not (Test-Path -LiteralPath $pgControl)) { throw 'PostgreSQL 18 binaries were not found.' }
-& $pgControl status -D $dataRoot *> $null
-if ($LASTEXITCODE -ne 0) {
-  & $pgControl start -D $dataRoot -o '-p 55439 -h 127.0.0.1' -l (Join-Path $taskRoot 'work/postgres/postgres.log') -w -t 15
-  if ($LASTEXITCODE -ne 0) { throw 'Could not start isolated PostgreSQL.' }
-}
+& (Join-Path $PSScriptRoot 'start-postgres.ps1') -DataDirectory $dataRoot -LogPath (Join-Path $taskRoot 'work/postgres/postgres.log')
 Push-Location $repoRoot
 try {
   $node = (Get-Command node.exe -ErrorAction Stop).Source
