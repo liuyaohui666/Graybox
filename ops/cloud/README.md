@@ -43,3 +43,28 @@ Run backup.sh as root; verify archive checksum/list, then restore into a separat
 `graybox_restore_check` database and compare counts/revisions before saying restoration
 is tested. A successful dump alone does not establish disaster recovery. Store an
 encrypted off-host backup before treating the pilot as production-critical.
+
+## Existing installation upgrade (project library 0.2)
+
+Do not rerun install.py on the existing server. Build and checksum a new server archive,
+upload it to a fresh root-private staging directory, and inspect its release metadata.
+Run `python3 ops/test_upgrade.py` from the staged release before `python3 ops/upgrade.py`.
+The upgrade script holds an exclusive operation lock, copies an immutable release,
+checks Node syntax, stops only Graybox, runs the previous release's backup script,
+then runs the reviewed migrations and old-data preservation guard in one transaction.
+Only additive changes may commit. It switches the release pointer, starts Graybox and
+checks HTTPS/environment identity, existing service PIDs and Nginx configuration hashes.
+No invitation, account, credential, firewall, Nginx or shared PostgreSQL changes occur.
+
+Migration SQL is trusted reviewed source. Do not put independent BEGIN/COMMIT or
+nontransactional operations inside migration files. The guard verifies old table rows,
+including nested JSON and array values, before COMMIT; it is not a SQL sandbox.
+
+Upgrade reports and pre-migration snapshots remain root-private under
+`/var/lib/graybox/upgrade-*.json`; snapshots can contain authentication hashes and must
+not be published. On failure the script separately attempts stop, restore old pointer,
+start and old-environment health verification, and reports whether recovery succeeded.
+Backups, old/new releases and additive schema are retained. It never restores a database
+automatically or destroys later user writes. The old UI cannot access new library fields;
+after any manual downgrade, pause writes until compatibility is assessed. Actual restore
+testing and real friend-device acceptance are separate checks from a successful upgrade.
