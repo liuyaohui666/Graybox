@@ -17,6 +17,27 @@ async function req(method:'GET'|'POST',url:string,body?:unknown,token=f.humans[1
 beforeAll(async()=>{app=await buildApp({pool:runtime,mode:'local'});});
 beforeEach(async()=>{await admin.query('DROP SCHEMA IF EXISTS graybox CASCADE');await migrate(admin);f=await seedDatabase(admin);});
 afterAll(async()=>{await app.close();await runtime.end();await admin.end();});
+
+test('nickname changes only the current human, persists and leaves credentials, roles and ownership intact',async()=>{
+ const before=(await admin.query('SELECT id,role,username,password_hash FROM graybox.users ORDER BY id')).rows;
+ const projects=(await admin.query('SELECT id,creator_id FROM graybox.projects ORDER BY id')).rows;
+ const saved=await req('POST','/v1/profile/name',{name:'  江微雪的新昵称  '});
+ expect(saved.status).toBe(200);expect(saved.data).toMatchObject({id:f.humans[1]!.id,name:'江微雪的新昵称'});
+ expect(await req('POST','/v1/profile/name',{name:'江微雪的新昵称'})).toEqual(saved);
+ await migrate(admin);
+ expect((await req('GET','/v1/people')).data.find((p:any)=>p.id===f.humans[1]!.id).name).toBe('江微雪的新昵称');
+ expect((await admin.query('SELECT id,role,username,password_hash FROM graybox.users ORDER BY id')).rows).toEqual(before);
+ expect((await admin.query('SELECT id,creator_id FROM graybox.projects ORDER BY id')).rows).toEqual(projects);
+ await expect(runtime.query('UPDATE graybox.users SET name=name')).rejects.toHaveProperty('code','42501');
+});
+
+test('nickname rejects agents, other identities, invalid names and revoked credentials',async()=>{
+ expect((await req('POST','/v1/profile/name',{name:'No agent edits'},f.tokens.member_agent)).status).toBe(403);
+ for(const body of [{name:''},{name:'  '},{name:'a'.repeat(101)},{name:'a\nb'},{name:'a\u0000b'},{name:'x',id:f.humans[0]!.id},{name:'x',role:'owner'}])expect((await req('POST','/v1/profile/name',body)).status).toBe(400);
+ const service=new Service(runtime),p=await service.authenticate(f.humans[1]!.token);
+ await admin.query('UPDATE graybox.credentials SET revoked_at=now() WHERE id=$1',[p.id]);
+ await expect(service.setName(p,{name:'No revoked edits'})).rejects.toMatchObject({code:'UNAUTHORIZED'});
+});
 test('safe human directory and own avatar persist, retry, replay migration and reset',async()=>{
  const people=(await req('GET','/v1/people')).data;expect(people).toHaveLength(3);expect(Object.keys(people[0]).sort()).toEqual(['avatar_data','id','name']);
  const saved=await req('POST','/v1/profile/avatar',{avatar_data:avatar});expect(saved.status).toBe(200);expect(saved.data.id).toBe(f.humans[1]!.id);expect(saved.data.avatar_data).toBe(avatar);
@@ -52,7 +73,8 @@ test('same runtime API saves cloud owner avatar and retains it after login',asyn
  await admin.query('DROP SCHEMA graybox CASCADE');await migrate(admin);const invite=await bootstrapCloud(admin);const cloud=await buildApp({pool:runtime,authPool:admin,mode:'cloud'});
  try {const login={username:'owner',password:'secure password here!'};const result=await cloud.inject({method:'POST',url:'/v1/auth/redeem',payload:{code:invite.code,name:'Real name',...login}});const user=result.json().data;
  const saved=await cloud.inject({method:'POST',url:'/v1/profile/avatar',headers:{authorization:'Bearer '+user.token},payload:{avatar_data:avatar}});expect(saved.statusCode).toBe(200);
+ const renamed=await cloud.inject({method:'POST',url:'/v1/profile/name',headers:{authorization:'Bearer '+user.token},payload:{name:'Updated nickname'}});expect(renamed.statusCode).toBe(200);
  const again=(await cloud.inject({method:'POST',url:'/v1/auth/login',payload:login})).json().data;
- const directory=await cloud.inject({method:'GET',url:'/v1/people',headers:{authorization:'Bearer '+again.token}});expect(directory.json().data[0]).toMatchObject({id:user.profile.id,name:'Real name',avatar_data:avatar});
+ const directory=await cloud.inject({method:'GET',url:'/v1/people',headers:{authorization:'Bearer '+again.token}});expect(directory.json().data[0]).toMatchObject({id:user.profile.id,name:'Updated nickname',avatar_data:avatar});
  }finally{await cloud.close();}
 });

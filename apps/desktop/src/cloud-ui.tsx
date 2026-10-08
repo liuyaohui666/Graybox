@@ -16,6 +16,7 @@ export function SessionGate({children}: {children: React.ReactNode}) {
   const [manage, setManage] = useState(false);
   useEffect(() => { void connection().then(setState).catch(e => { setError(e.message); setState({mode:"cloud",endpoint:""}); }); }, []);
   useEffect(() => { const ended = () => { setState(s => s ? {...s,profile:undefined} : s); setManage(false); setError("会话已过期或已撤销，请重新登录。"); }; window.addEventListener("graybox-session-ended", ended); return () => window.removeEventListener("graybox-session-ended", ended); }, []);
+  useEffect(()=>{const update=(event:Event)=>{const person=(event as CustomEvent<{id:string;name:string}>).detail;setState(s=>s?.profile?.id===person.id?{...s,profile:{...s.profile,name:person.name}}:s);};window.addEventListener("graybox-profile-updated",update);return()=>window.removeEventListener("graybox-profile-updated",update);},[]);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); setBusy(true); setError("");
     const f = new FormData(e.currentTarget);

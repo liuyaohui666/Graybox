@@ -718,7 +718,7 @@ function App() {
           )}
           <footer className="footer">
             <span>Graybox</span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.1</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.2</span>
           </footer>
         </div>
       </main>

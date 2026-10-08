@@ -186,3 +186,7 @@ dialog::backdrop { background: #252a3055; backdrop-filter: none; }
   .member-identity { gap: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+
+.profile-hint { font-size: 12px; line-height: 1.7; }
+
+.profile-recovery { display: grid; justify-items: start; gap: 10px; font-size: 12px; overflow-wrap: anywhere; }

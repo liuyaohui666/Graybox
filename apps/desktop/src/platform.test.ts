@@ -84,3 +84,14 @@ it('first definitive social rejection allows recovery while expired session incr
  const p=await import('./platform.ts'),{writeSafety}=await import('./write-safety.ts');const before=p.sessionGeneration();
  await expect(p.request('a','/v1/projects/idea/agreement','POST',{agreed:true})).rejects.toThrow('expired');expect(writeSafety.snapshot()).toBeNull();expect(p.sessionGeneration()).toBeGreaterThan(before);
 });
+
+it("nickname retry freezes its original payload and keeps logout blocked until confirmed",async()=>{
+ let offline=true;
+ vi.stubGlobal('fetch',vi.fn(async()=>{if(offline)throw new Error('offline');return {headers:new Headers({'content-type':'application/json'}),json:async()=>({data:{id:'a',name:'New name'}})};}));
+ const p=await import('./platform.ts');const {writeSafety}=await import('./write-safety.ts');
+ await expect(p.request('a','/v1/profile/name','POST',{name:'New name'})).rejects.toThrow('offline');
+ expect(writeSafety.snapshot()?.operation).toBe('昵称修改');
+ await expect(p.request('a','/v1/profile/name','POST',{name:'Different name'})).rejects.toThrow('结果尚未确认');
+ await expect(p.logout()).rejects.toThrow('结果未确认');
+ offline=false;await p.request('a','/v1/profile/name','POST',{name:'New name'});expect(writeSafety.snapshot()).toBeNull();
+});

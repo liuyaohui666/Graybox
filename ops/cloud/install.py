@@ -69,7 +69,7 @@ for role,pw in passwords.items():
     sql(f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT {6 if role=='graybox_runtime' else 2} PASSWORD '{pw}'; ALTER ROLE {role} SET statement_timeout='10s'; ALTER ROLE {role} SET lock_timeout='5s';")
 sql('CREATE DATABASE graybox_cloud OWNER graybox_admin TEMPLATE template0;')
 sql('REVOKE CONNECT ON DATABASE graybox_cloud FROM PUBLIC; GRANT CONNECT ON DATABASE graybox_cloud TO graybox_admin,graybox_runtime,graybox_auth;')
-sql('BEGIN; SET LOCAL ROLE graybox_admin;\n'+(RELEASE/'db/001_m1.sql').read_text()+'\n'+(RELEASE/'db/002_cloud_auth.sql').read_text()+'\n'+(RELEASE/'db/003_project_library.sql').read_text()+'\n'+(RELEASE/'db/004_personal_avatars.sql').read_text()+'\n'+(RELEASE/'db/005_team_social.sql').read_text()+'\nCOMMIT;','graybox_cloud')
+sql('BEGIN; SET LOCAL ROLE graybox_admin;\n'+(RELEASE/'db/001_m1.sql').read_text()+'\n'+(RELEASE/'db/002_cloud_auth.sql').read_text()+'\n'+(RELEASE/'db/003_project_library.sql').read_text()+'\n'+(RELEASE/'db/004_personal_avatars.sql').read_text()+'\n'+(RELEASE/'db/005_team_social.sql').read_text()+'\n'+(RELEASE/'db/006_profile_name.sql').read_text()+'\nCOMMIT;','graybox_cloud')
 def url(role): return f'postgresql://{role}:{passwords[role]}@127.0.0.1:5432/graybox_cloud'
 private_write(ETC/'runtime.env','GRAYBOX_MODE=cloud\nGRAYBOX_DATABASE_URL='+url('graybox_runtime')+'\nGRAYBOX_AUTH_DATABASE_URL='+url('graybox_auth')+'\n')
 private_write(ETC/'migration.env','GRAYBOX_MIGRATION_DATABASE_URL='+url('graybox_admin')+'\n')

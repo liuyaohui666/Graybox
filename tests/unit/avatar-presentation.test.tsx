@@ -36,3 +36,14 @@ test('upload decodes WebP, crops square and exports bounded canonical PNG while 
  canvas.toDataURL.mockReturnValue('x'.repeat(180001));await expect(prepareAvatar(new File(['png'],'a.png',{type:'image/png'}))).rejects.toThrow('过大');expect(close).toHaveBeenCalledTimes(2);
  await expect(prepareAvatar(new File(['svg'],'a.svg',{type:'image/svg+xml'}))).rejects.toThrow('PNG');
 });
+
+import {SidebarAccount} from '../../apps/desktop/src/avatars.tsx';
+import {allowedLocalRequest} from '../../apps/desktop/src/request-path.ts';
+test('renamed people replace cached sidebar and attribution names; nickname route stays narrow',()=>{
+ const old={id:'a',name:'Old name',role:'member'},person={...old,name:'New name'};
+ const html=renderToStaticMarkup(<PeopleContext.Provider value={{people:[person],mode:'cloud',refresh:async()=>{}}}><SidebarAccount profile="a" person={old} locked={false} setBusy={()=>{}}/><Attribution id="a" name="Old name" detail/></PeopleContext.Provider>);
+ expect(html).toContain('New name');expect(html).not.toContain('Old name');expect(html).toContain('个人资料');
+ expect(allowedLocalRequest('/v1/profile/name','POST')).toBe(true);
+ for(const path of ['/v1/profile/name/other','/v1/profile/name?name=x','/v1/profile/role'])expect(allowedLocalRequest(path,'POST')).toBe(false);
+ expect(allowedLocalRequest('/v1/profile/name','GET')).toBe(false);
+});

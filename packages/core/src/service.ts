@@ -67,6 +67,14 @@ export class Service {
       return inboxPage(c,current);
     });
   }
+  async setName(p:Principal,body:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human profile required',403);
+      const parsed=z.strictObject({name:z.string().regex(/^[^\u0000-\u001f\u007f]*$/).trim().min(1).max(100)}).safeParse(body);
+      if(!parsed.success)return fail('VALIDATION','昵称需要 1–100 个字符，不能包含控制字符。',400);
+      return (await c.query('SELECT * FROM graybox.set_profile_name($1,$2)',[current.id,parsed.data.name])).rows[0];
+    });
+  }
   async setAvatar(p:Principal,body:unknown) {
     return this.transaction(p,async(c,current)=>{
       if(current.kind!=='human')fail('FORBIDDEN','Human profile required',403);

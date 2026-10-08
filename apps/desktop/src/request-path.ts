@@ -10,5 +10,5 @@ export function allowedLocalRequest(input: unknown, method: unknown): boolean {
   const id='[a-zA-Z0-9_-]+';
   return method==='GET'
     ? new RegExp(`^/v1/(?:me|health|workspaces|people|notifications|tags|activity|projects(?:/${id}(?:/(?:retrospectives|comments|agreement))?)?|experiments(?:/${id})?)$`).test(path)
-    : new RegExp(`^/v1/(?:profile/avatar|notifications/read|projects/${id}/agreement|commands|batches/${id}/(?:preview|undo))$`).test(path);
+    : new RegExp(`^/v1/(?:profile/(?:avatar|name)|notifications/read|projects/${id}/agreement|commands|batches/${id}/(?:preview|undo))$`).test(path);
 }

@@ -1,4 +1,5 @@
 import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
+import {ProfileEditor} from './profile-editor.tsx';
 import {request,sessionGeneration,type Profile} from './platform.ts';
 import {AvatarGeneration,displayName,personLabel,prepareAvatar} from './avatar-model.ts';
 export interface Person extends Omit<Profile,'role'> {role?:string;avatar_data?:string|null}
@@ -7,7 +8,7 @@ export function PeopleProvider({profile,mode,children}:{profile:string;mode:'loc
  const [people,setPeople]=useState<Person[]>([]),[error,setError]=useState(''),generation=useRef(0),active=useRef(profile),reads=useRef(0);active.current=profile;
  async function refresh(){const id=profile,g=generation.current,r=++reads.current,s=sessionGeneration();if(!id)return;
   const current=()=>active.current===id&&generation.current===g&&reads.current===r&&sessionGeneration()===s;
-  try{const value=await request<Person[]>(id,'/v1/people');if(current()){setPeople(value);setError('');}}
+  try{const identityForEvent=id,value=await request<Person[]>(id,'/v1/people');if(current()){setPeople(value);setError('');const own=value.find(person=>person.id===identityForEvent);if(own)window.dispatchEvent(new CustomEvent('graybox-profile-updated',{detail:{id:own.id,name:own.name}}));}}
   catch(e){if(current())setError((e as Error).message);throw e;}
  }
  useEffect(()=>{generation.current++;setPeople([]);setError('');void refresh().catch(()=>{});const update=()=>void refresh().catch(()=>{});const timer=setInterval(update,15000);window.addEventListener('focus',update);return()=>{generation.current++;clearInterval(timer);window.removeEventListener('focus',update);};},[profile]);
@@ -24,13 +25,13 @@ export function Attribution({id,name,agentId,detail=false}:{id?:string|null;name
  return <span className="attribution"><Avatar person={fallback} mode={mode}/>{detail&&<span>{fallback?personLabel(fallback,mode):'历史记录未注明'}</span>}{agentId&&<span className="agent-indicator">Agent</span>}</span>;
 }
 export function SidebarAccount(props:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
- const {mode}=useContext(PeopleContext);
- return <div className="profile"><AvatarEditor {...props}/><span className="account-name">{props.person?personLabel(props.person,mode):'连接中'}</span></div>;
+ const {mode,people}=useContext(PeopleContext),current=people.find(p=>p.id===props.profile)??props.person;
+ return <div className="profile"><AvatarEditor {...props}/><span className="account-name">{current?personLabel(current,mode):'连接中'}</span></div>;
 }
 export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
- const {people,mode,refresh}=useContext(PeopleContext),guard=useRef(new AvatarGeneration()),active=useRef(profile),writing=useRef(false),[message,setMessage]=useState('');active.current=profile;
+ const {people,mode,refresh}=useContext(PeopleContext),guard=useRef(new AvatarGeneration()),active=useRef(profile),writing=useRef(false),[message,setMessage]=useState(''),[editing,setEditing]=useState(false);active.current=profile;
  const current=people.find(p=>p.id===profile)??person,input=useRef<HTMLInputElement>(null),menu=useRef<HTMLDetailsElement>(null);
- useEffect(()=>{guard.current.cancel();setMessage('');if(menu.current)menu.current.open=false;return()=>guard.current.cancel();},[profile]);
+ useEffect(()=>{guard.current.cancel();setMessage('');setEditing(false);if(menu.current)menu.current.open=false;return()=>guard.current.cancel();},[profile]);
  useEffect(()=>{const close=(event:PointerEvent)=>{if(menu.current&&!menu.current.contains(event.target as Node))menu.current.open=false;};document.addEventListener('pointerdown',close);return()=>document.removeEventListener('pointerdown',close);},[]);
  async function save(file:File|null) {
   if(!profile||locked||writing.current)return;writing.current=true;setBusy(true);setMessage('');
@@ -43,5 +44,5 @@ export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;per
   }catch(e){if(guard.current.current(token,active.current,sessionGeneration()))setMessage((e as Error).message);}
   finally{writing.current=false;setBusy(false);}
  }
- return <details ref={menu} className="avatar-editor" onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;menu.current.querySelector('summary')?.focus();}}}><summary role="button" aria-label="头像选项" title="更换头像"><Avatar person={current} mode={mode}/></summary><div className="avatar-menu"><button type="button" disabled={locked} onClick={()=>input.current?.click()}>更换头像</button><input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/><button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>{message&&<p role="status">{message}</p>}</div></details>;
+ return <><details ref={menu} className="avatar-editor" onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;menu.current.querySelector('summary')?.focus();}}}><summary role="button" aria-label="头像选项" title="个人资料与头像"><Avatar person={current} mode={mode}/></summary><div className="avatar-menu"><button type="button" disabled={locked||!current} onClick={()=>{if(menu.current)menu.current.open=false;setEditing(true);}}>个人资料</button><button type="button" disabled={locked} onClick={()=>input.current?.click()}>更换头像</button><input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/><button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>{message&&<p role="status">{message}</p>}</div></details>{editing&&current&&<ProfileEditor profile={profile} initialName={displayName(current,mode)} locked={locked} setBusy={setBusy} refresh={refresh} close={()=>setEditing(false)}/>}</>;
 }
