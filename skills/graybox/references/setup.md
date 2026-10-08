@@ -10,7 +10,7 @@
 node C:/工具/Graybox/runtime/client.mjs auth pair-start --endpoint https://你的服务域名 --name 我的Codex --config C:/Users/我/Graybox-private/client.json
 ```
 
-在 Graybox 桌面端登录自己的账号，输入返回的配对码，并选择实际允许的项目。然后执行：
+在 Graybox 桌面端登录自己的账号，打开“团队与 Agent”并输入返回的配对码。当前界面会授权全部项目；确认这是你希望授予该 Agent 的范围后批准配对。然后执行：
 
 ```powershell
 node C:/工具/Graybox/runtime/client.mjs auth pair-complete --config C:/Users/我/Graybox-private/client.json
