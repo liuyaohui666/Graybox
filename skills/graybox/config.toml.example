@@ -1,0 +1,6 @@
+# 自行替换绝对路径，合并到明确选择的项目 .codex/config.toml。
+[mcp_servers.graybox]
+command = "C:/ABSOLUTE/Node/node.exe"
+args = ["C:/ABSOLUTE/Graybox/runtime/client.mjs", "mcp", "serve"]
+[mcp_servers.graybox.env]
+GRAYBOX_CLIENT_CONFIG = "C:/Users/ME/Graybox-private/client.json"
