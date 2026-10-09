@@ -101,6 +101,26 @@ export async function request<T>(profileId: string, path: string, method = "GET"
   }
 }
 
+function bytes64(bytes:Uint8Array){let text='';for(let i=0;i<bytes.length;i+=16384)text+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(text);}
+export async function attachmentTransfer(profileId:string,path:string,bytes?:Uint8Array,metadata?:unknown):Promise<unknown> {
+ const c=current??await connection(),revision=sessionRevision,requestBearer=bearer;
+ const fail=(code:string,message:string)=>{if(code==='UNAUTHORIZED'&&c.mode==='cloud'&&requestBearer===bearer&&revision===sessionRevision){bearer=undefined;if(current)current.profile=undefined;forgetBrowserSession();sessionRevision++;window.dispatchEvent?.(new Event('graybox-session-ended'));}throw new ApiError(code,message);};
+ if(!/^\/v1\/attachments\/(upload|[a-f0-9-]{36}\/content)$/.test(path))throw new Error('附件路径不正确。');
+ if(isTauri()) {
+  const result=await invoke<{data?:unknown;error?:{code:string;message:string}}>('attachment_transfer',{profileId,path,metadata:metadata??null,dataBase64:bytes?bytes64(bytes):null});
+  if(revision!==sessionRevision)throw new Error('会话已变更，请重新读取附件。');
+  if(result.error)fail(result.error.code,result.error.message);
+  return result.data;
+ }
+ if(c.mode!=='cloud')throw new Error('附件预览请使用云端网页或桌面客户端。');
+ const metadata64=metadata?bytes64(new TextEncoder().encode(JSON.stringify(metadata))).replaceAll('+','-').replaceAll('/','_').replaceAll('=',''):'';
+ const response=await fetch(path,{method:bytes?'POST':'GET',credentials:'omit',redirect:'error',headers:{...(bearer?{Authorization:`Bearer ${bearer}`} : {}),...(bytes?{'Content-Type':'application/octet-stream','x-graybox-metadata':metadata64}:{})},...(bytes?{body:bytes as BodyInit}:{}),signal:AbortSignal.timeout(90000)});
+ if(revision!==sessionRevision)throw new Error('会话已变更，请重新读取附件。');
+ if(!response.ok){let message='附件传输失败，请重试原操作。',code='UPLOAD_FAILED';try{const error=(await response.json()).error;message=error?.message??message;code=error?.code??code;}catch{}fail(code,message);}
+ if(bytes)return (await response.json()).data;
+ return {base64:bytes64(new Uint8Array(await response.arrayBuffer())),mime_type:response.headers.get('content-type')??'application/octet-stream'};
+}
+
 
 
 

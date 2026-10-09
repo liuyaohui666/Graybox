@@ -7,7 +7,7 @@ export async function migrate(pool:Pool) {
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(77321)');
-    for (const file of ['001_m1.sql', '002_cloud_auth.sql','003_project_library.sql','004_personal_avatars.sql','005_team_social.sql','006_profile_name.sql','007_collaboration.sql'])
+    for (const file of ['001_m1.sql', '002_cloud_auth.sql','003_project_library.sql','004_personal_avatars.sql','005_team_social.sql','006_profile_name.sql','007_collaboration.sql','008_attachments.sql'])
       await client.query(await readFile(new URL(`../../../db/migrations/${file}`,import.meta.url),'utf8'));
     await client.query('COMMIT');
   }

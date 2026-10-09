@@ -4,9 +4,13 @@ import { commandSchema,legacyCommandSchema,evidenceDetails,undoSchema } from '..
 import { syncStatus,syncPrepare,syncExecute } from '../../../packages/local-context/src/sync.ts';
 import { resolveContext,executeCommand,undoExecutionContext,activateIdea,activateExperiment } from '../../../packages/local-context/src/binding.ts';
 import { ClientError,safeError } from '../../../packages/client/src/client.ts';
+import {attachmentList,attachmentWrite,attachmentTarget,attachmentUploadInput,attachmentLinkInput} from '../../../packages/local-context/src/attachment-sync.ts';
 const cwd=z.string().min(1).describe('Explicit absolute directory of the user project. Never inferred from MCP process cwd.');
 const commands=legacyCommandSchema.options;
 export const schemas={
+  attachment_list:attachmentTarget.extend({cwd}),
+  attachment_upload:attachmentUploadInput.extend({cwd}),
+  attachment_link:attachmentLinkInput.extend({cwd}),
   command_execute:z.strictObject({cwd,command:commandSchema}),
   entity_activate:z.strictObject({cwd,entity_type:z.enum(['idea','experiment']),id:z.uuid().nullable()}),
   sync_status:z.strictObject({cwd}),
@@ -59,6 +63,9 @@ export async function batchUndo(cwd:string,body:{action:'preview'|'execute';batc
   throw new ClientError('VALIDATION','Unknown undo action');
 }
 const descriptions:Record<keyof typeof schemas,string>={
+  attachment_list:'List authenticated attachments for explicit project, idea or experiment in the bound context.',
+  attachment_upload:'Upload one explicitly authorized absolute regular file (image, video or self-contained HTML). Durable private SHA/target/metadata receipts reuse the same key and verify remote read-back.',
+  attachment_link:'Attach a public HTTPS repository or demo link using private durable deduplication and live target checks.',
   command_execute:'Execute any shared legacy or collaboration command in the explicit context. Stable keys/revisions required; use sync_prepare then sync_execute for durable incremental recording.',
   entity_activate:'Explicitly select an idea or experiment for future recording in this cwd, or clear its selection. Does not associate an unlinked idea with a project.',
   sync_status:'Read private identity/cwd-scoped last verified checkpoint and pending exact write receipts. Does not read inaccessible chat history.',
@@ -82,10 +89,11 @@ const descriptions:Record<keyof typeof schemas,string>={
   batch_undo:'Preview closes a batch and returns its signed five-minute token. Execute requires that token, matching batch revision and a stable UUID key. Only the selected agent’s own bound-project batches are eligible.'
 };
 export function registerTools(server:McpServer){
-  for(const [name,inputSchema] of Object.entries(schemas))server.registerTool(name,{description:descriptions[name as keyof typeof schemas],inputSchema:inputSchema as z.ZodType<Record<string,unknown>>,annotations:{readOnlyHint:['context_resolve','entity_get','entity_list','collaboration_get','sync_status','activity_list','retrospective_list','comment_list','tag_list'].includes(name),destructiveHint:name==='batch_undo',openWorldHint:false}},async(input:Record<string,unknown>)=>{
+  for(const [name,inputSchema] of Object.entries(schemas))server.registerTool(name,{description:descriptions[name as keyof typeof schemas],inputSchema:inputSchema as z.ZodType<Record<string,unknown>>,annotations:{readOnlyHint:['attachment_list','context_resolve','entity_get','entity_list','collaboration_get','sync_status','activity_list','retrospective_list','comment_list','tag_list'].includes(name),destructiveHint:name==='batch_undo',openWorldHint:false}},async(input:Record<string,unknown>)=>{
     try{
       const args=input as Record<string,unknown>,cwd=args.cwd as string;let data:unknown;
-      if(name==='context_resolve')data=(await resolveContext({cwd,includeGit:args.include_git as boolean|undefined})).safe;
+      if(name.startsWith('attachment_')){const {cwd:_cwd,...body}=args;data=name==='attachment_list'?await attachmentList({cwd},body):await attachmentWrite({cwd},body,name==='attachment_upload'?'upload':'link');}
+      else if(name==='context_resolve')data=(await resolveContext({cwd,includeGit:args.include_git as boolean|undefined})).safe;
       else if(name==='entity_get')data=await entityGet(cwd,args.entity_type as 'project'|'experiment'|'idea',args.id as string|undefined);
       else if(name==='entity_list')data=await entityList(cwd,args.entity_type as 'idea'|'experiment',args.unlinked as boolean|undefined);
       else if(name==='collaboration_get')data=await collaborationGet(cwd,args.entity_type as 'idea'|'experiment',args.id as string);

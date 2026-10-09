@@ -5,6 +5,8 @@ import cors from '@fastify/cors';
 import { z } from 'zod';
 import { DomainError,Service } from '../../../packages/core/src/service.ts';
 import type { Principal } from '../../../packages/contracts/src/index.ts';
+import {Attachments} from '../../../packages/core/src/attachments.ts';
+import {registerAttachments} from './attachments.ts';
 export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) {
   if(!['local','cloud'].includes(options.mode)) throw new Error('Production start disabled: unsupported mode');
   if(options.mode==='cloud'&&!options.authPool) throw new Error('Cloud authPool required');
@@ -12,9 +14,9 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
   const publicRoutes=new Set(['/v1/health',...(auth?['/v1/auth/login','/v1/auth/redeem','/v1/auth/pair/start','/v1/auth/pair/poll']:[])]);
   const limits=new Map<string,{count:number;until:number}>();
   const app=Fastify({logger:false,bodyLimit:256*1024,trustProxy:options.mode==='cloud'?(address,hop)=>hop===0&&(address==='127.0.0.1'||address==='::ffff:127.0.0.1'):false}); const service=new Service(options.pool,options.mode as 'local'|'cloud');
-  await app.register(cors,{origin:['http://127.0.0.1:1420','http://localhost:1420','http://127.0.0.1:5173','http://localhost:5173','http://tauri.localhost','tauri://localhost'],methods:['GET','POST'],allowedHeaders:['authorization','content-type']});
+  await app.register(cors,{origin:['http://127.0.0.1:1420','http://localhost:1420','http://127.0.0.1:5173','http://localhost:5173','http://tauri.localhost','tauri://localhost'],methods:['GET','POST'],allowedHeaders:['authorization','content-type','x-graybox-metadata','range'],exposedHeaders:['content-type','content-length','content-range','accept-ranges']});
   app.decorateRequest('principal',null);
-  app.addHook('preHandler',async request=> {
+  app.addHook('onRequest',async request=> {
     const path=request.url.split('?')[0];
     if(auth&&request.method!=='OPTIONS'&&path.startsWith('/v1/auth/')) {
       const key=request.ip,now=Date.now();
@@ -28,7 +30,7 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
       }
       if(++limit.count>30)throw new DomainError('RATE_LIMITED','Try again later',429);
     }
-    if(publicRoutes.has(path) || request.method==='OPTIONS') return;
+    if(publicRoutes.has(path) || request.method==='OPTIONS' || (request.method==='GET'&&/^\/v1\/attachment-previews\/[a-f0-9]{64}$/.test(path))) return;
     const authorization=request.headers.authorization??'';
     if(!authorization.startsWith('Bearer ')) throw new DomainError('UNAUTHORIZED','Bearer credential required',401);
     (request as typeof request & {principal:Principal}).principal=await service.authenticate(authorization.slice(7));
@@ -40,6 +42,7 @@ export async function buildApp(options: {pool:Pool;mode:string;authPool?:Pool}) 
     return reply.code(500).send({error:{code:'INTERNAL',message:'Operation failed; transaction was rolled back'}});
   });
   const principal=(request:unknown)=>(request as {principal:Principal}).principal;
+  registerAttachments(app,new Attachments(options.pool,service));
   const id=(value:unknown)=> {const result=z.uuid().safeParse(value);if(!result.success) throw new DomainError('VALIDATION','Valid UUID required',400);return result.data;};
   app.get('/v1/health',async()=>({data:await service.health()}));
   app.get('/v1/me',async request=> {const p=principal(request);return {data:{credential_id:p.id,human_id:p.human_id,agent_id:p.agent_id,kind:p.kind,project_ids:p.project_ids}};});

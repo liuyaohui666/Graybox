@@ -1,4 +1,4 @@
-param([switch]$SkipShortcuts,[switch]$IncludeLocal)
+﻿param([switch]$SkipShortcuts,[switch]$IncludeLocal)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $output=[IO.Path]::GetFullPath((Join-Path $repo '../outputs'))
@@ -14,7 +14,7 @@ foreach ($mode in $modes) {
   $folder=Join-Path $output ('Graybox-'+$mode)
   if (-not (Test-Path -LiteralPath $folder)) { throw "Missing delivery folder: $folder" }
   # Do not replace the old binary while the user may have an unsaved draft open.
-  $binary=Join-Path $folder 'Graybox-0.4.2-gui.exe'
+  $binary=Join-Path $folder 'Graybox-0.5.0-gui.exe'
   if (-not (Test-Path -LiteralPath $binary) -or (Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $binary).Hash) {
     Copy-Item -LiteralPath $source -Destination $binary -Force
   }
@@ -31,7 +31,7 @@ environment.Remove "GRAYBOX_CREDENTIALS_PATH"
 environment.Remove "GRAYBOX_ENVIRONMENT_ID"
 environment("GRAYBOX_SERVER_URL") = "https://api.qingsuworks.top:8443"
 shell.CurrentDirectory = folder
-shell.Run Chr(34) & folder & "\Graybox-0.4.2-gui.exe" & Chr(34), 1, False
+shell.Run Chr(34) & folder & "\Graybox-0.5.0-gui.exe" & Chr(34), 1, False
 '@
   } else {
     $script=@'
@@ -41,7 +41,7 @@ Set shell = CreateObject("WScript.Shell")
 Set files = CreateObject("Scripting.FileSystemObject")
 folder = files.GetParentFolderName(WScript.ScriptFullName)
 repo = files.GetAbsolutePathName(folder & "\..\..\graybox")
-command = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File " & Chr(34) & repo & "\scripts\start-local.ps1" & Chr(34) & " -Executable " & Chr(34) & folder & "\Graybox-0.4.2-gui.exe" & Chr(34)
+command = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File " & Chr(34) & repo & "\scripts\start-local.ps1" & Chr(34) & " -Executable " & Chr(34) & folder & "\Graybox-0.5.0-gui.exe" & Chr(34)
 result = shell.Run(command, 0, True)
 If result <> 0 Then MsgBox "Graybox could not start. Run Start-Graybox.cmd in this folder for diagnostics.", 16, "Graybox"
 '@
@@ -49,7 +49,7 @@ If result <> 0 Then MsgBox "Graybox could not start. Run Start-Graybox.cmd in th
   [IO.File]::WriteAllText($launcher,$script,[Text.Encoding]::Unicode)
   if ($mode -eq 'cloud') {
     $instructions=@'
-Graybox 0.4.2 云端桌面客户端
+Graybox 0.5.0 云端桌面客户端
 
 日常启动：双击 Start-Graybox.vbs（没有命令窗口）。
 本机桌面的 Graybox 快捷方式也指向这个入口。
@@ -62,7 +62,7 @@ Start-Graybox.cmd 仅供排查启动故障，会显示命令窗口。
   }
   # Keep the explicitly chosen command-line entrypoint for troubleshooting.
   $diagnostic=Join-Path $folder 'Start-Graybox.cmd'
-  $cmd=[regex]::Replace([IO.File]::ReadAllText($diagnostic),'Graybox(?:-[0-9.]+-gui)?\.exe','Graybox-0.4.2-gui.exe')
+  $cmd=[regex]::Replace([IO.File]::ReadAllText($diagnostic),'Graybox(?:-[0-9.]+-gui)?\.exe','Graybox-0.5.0-gui.exe')
   [IO.File]::WriteAllText($diagnostic,$cmd,[Text.Encoding]::ASCII)
   if (-not $SkipShortcuts) {
     $name=if ($mode -eq 'cloud') {'Graybox.lnk'} else {'Graybox 本地版.lnk'}

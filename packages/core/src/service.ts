@@ -145,6 +145,13 @@ export class Service {
     if((await experimentOwner(c,e.id)).owner_id!==p.human_id && !(await c.query("SELECT id FROM graybox.collaboration_events WHERE entity_type='experiment' AND entity_id=$1 AND author_id=$2 AND kind='join' LIMIT 1",[e.id,p.human_id])).rowCount)fail('FORBIDDEN','Only experiment owner may edit',403);
   }
   async getIdea(p:Principal,id:string) {return this.transaction(p,(c,current)=>idea(c,current,id,fail));}
+  async attachmentTransaction<T>(p:Principal,type:'project'|'idea'|'experiment',id:string,write:boolean,fn:(c:PoolClient,current:Principal,target:Entity)=>Promise<T>) {
+    return this.transaction(p,async(c,current)=>{
+      const target=type==='project'?await this.entity(c,'project',id,false,current):await this.collaborationEntity(c,current,type,id);
+      if(write&&!target.can_edit&&!target.can_contribute)fail('FORBIDDEN','Target edit or contribute permission required',403);
+      return fn(c,current,target);
+    });
+  }
   async ideas(p:Principal,query:unknown) {
     return this.transaction(p,async(c,current)=>{
       const parsed=z.strictObject({project_id:z.uuid().optional(),unlinked:z.enum(['true','false']).optional()}).safeParse(query);

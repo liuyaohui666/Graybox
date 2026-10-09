@@ -36,3 +36,6 @@ node C:/工具/Graybox/runtime/client.mjs context --cwd C:/我的项目
 账号角色与业务权限分开：创建者为项目 owner，其他人为 member；团队管理不能编辑别人的项目。项目 owner 可编辑项目元数据与添加复盘；想法和实验有独立主导者，编辑内容、证据、提交与合并遵循实体主导权限。成员可参与、评论及创建自己的分支，人工验收由人类完成。Agent 权限等于所属人类的实际业务权限与凭据范围的交集。创建者未知的历史项目未分配、只读。撤销还检查当前项目归属，已成功的原请求原键仅返回稳定收据。
 
 协作命令、独立想法和持久增量同步的完整格式见 [sync.md](sync.md)。自然语言“写入 Graybox / 同步这次结果”使用 sync_status → sync_prepare → sync_execute，先持久保存稳定键，再核对服务器活动推进 checkpoint。
+# 附件配置
+
+附件操作要求可信个人配置在仓库外，使 `attachment-receipts` 私人日志不进入 Git。使用现有配对配置；命令与范围见 [attachments.md](attachments.md)。

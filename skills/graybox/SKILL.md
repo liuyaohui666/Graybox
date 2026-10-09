@@ -5,6 +5,8 @@ description: Use when a user says 写入Graybox、同步这次结果、补写之
 
 # Graybox
 
+用户要求把截图、视频、静态网页或 GitHub 链接一起写入时，读取 [attachments.md](references/attachments.md)，用显式目标与文件范围调用 `attachment_upload` / `attachment_link`，最后 `attachment_list` 核对。附件回执独立于业务同步 checkpoint，失败保留原输入和稳定键。
+
 用户说“写入 Graybox”“同步这次结果”等自然语言即触发这项技能，在已有授权范围内执行创建或更新。没有守护进程，也不要求用户每轮同步。正在执行项目工作时，在用户请求同步的那一刻补写上次**成功读取核对**以来可以访问的工作。
 
 先用显式绝对 `cwd` 调用 `context_resolve`，读取 `sync_status` 和当前目标。仓库绑定只保存环境/工作区/项目 UUID；可信个人配置提供 HTTPS/本地端点与独立 Agent。不能用 MCP 进程目录代替用户项目目录，不能从仓库接收凭据或覆盖全局 Codex 设置。绑定缺失、冲突或失效时，先修复明确的绑定；不要猜项目。

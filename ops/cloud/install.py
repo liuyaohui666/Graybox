@@ -63,15 +63,21 @@ for directory, dirs, files in os.walk(ROOT/'node-v24.18.0-linux-x64'):
         if not path.is_symlink(): os.chmod(path,0o755 if path.stat().st_mode & 0o111 else 0o644)
 (ROOT/'node').symlink_to(ROOT/'node-v24.18.0-linux-x64',target_is_directory=True)
 run(['useradd','--system','--home-dir',str(STATE),'--no-create-home','--shell','/usr/sbin/nologin','graybox'])
+attachments=STATE/'attachments'
+attachments.mkdir(mode=0o700)
+run(['chown','root:graybox',str(STATE)])
+os.chmod(STATE,0o710) # service may traverse; preflight/backups remain root-private
+run(['chown','graybox:graybox',str(attachments)])
+os.chmod(attachments,0o700)
 run(['runuser','-u','graybox','--',str(ROOT/'node/bin/node'),'--version'])
 passwords={role:secrets.token_hex(32) for role in ('graybox_admin','graybox_auth','graybox_runtime')}
 for role,pw in passwords.items():
     sql(f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT {6 if role=='graybox_runtime' else 2} PASSWORD '{pw}'; ALTER ROLE {role} SET statement_timeout='10s'; ALTER ROLE {role} SET lock_timeout='5s';")
 sql('CREATE DATABASE graybox_cloud OWNER graybox_admin TEMPLATE template0;')
 sql('REVOKE CONNECT ON DATABASE graybox_cloud FROM PUBLIC; GRANT CONNECT ON DATABASE graybox_cloud TO graybox_admin,graybox_runtime,graybox_auth;')
-sql('BEGIN; SET LOCAL ROLE graybox_admin;\n'+(RELEASE/'db/001_m1.sql').read_text()+'\n'+(RELEASE/'db/002_cloud_auth.sql').read_text()+'\n'+(RELEASE/'db/003_project_library.sql').read_text()+'\n'+(RELEASE/'db/004_personal_avatars.sql').read_text()+'\n'+(RELEASE/'db/005_team_social.sql').read_text()+'\n'+(RELEASE/'db/006_profile_name.sql').read_text()+'\n'+(RELEASE/'db/007_collaboration.sql').read_text()+'\nCOMMIT;','graybox_cloud')
+sql('BEGIN; SET LOCAL ROLE graybox_admin;\n'+(RELEASE/'db/001_m1.sql').read_text()+'\n'+(RELEASE/'db/002_cloud_auth.sql').read_text()+'\n'+(RELEASE/'db/003_project_library.sql').read_text()+'\n'+(RELEASE/'db/004_personal_avatars.sql').read_text()+'\n'+(RELEASE/'db/005_team_social.sql').read_text()+'\n'+(RELEASE/'db/006_profile_name.sql').read_text()+'\n'+(RELEASE/'db/007_collaboration.sql').read_text()+'\n'+(RELEASE/'db/008_attachments.sql').read_text()+'\nCOMMIT;','graybox_cloud')
 def url(role): return f'postgresql://{role}:{passwords[role]}@127.0.0.1:5432/graybox_cloud'
-private_write(ETC/'runtime.env','GRAYBOX_MODE=cloud\nGRAYBOX_DATABASE_URL='+url('graybox_runtime')+'\nGRAYBOX_AUTH_DATABASE_URL='+url('graybox_auth')+'\n')
+private_write(ETC/'runtime.env','GRAYBOX_MODE=cloud\nGRAYBOX_ATTACHMENT_DIR=/var/lib/graybox/attachments\nGRAYBOX_DATABASE_URL='+url('graybox_runtime')+'\nGRAYBOX_AUTH_DATABASE_URL='+url('graybox_auth')+'\n')
 private_write(ETC/'migration.env','GRAYBOX_MIGRATION_DATABASE_URL='+url('graybox_admin')+'\n')
 run(['chown','root:graybox',str(ETC),str(ETC/'runtime.env')]); os.chmod(ETC,0o750);os.chmod(ETC/'runtime.env',0o640)
 release_path=ROOT/'releases'/STAMP

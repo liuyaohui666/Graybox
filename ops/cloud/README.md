@@ -68,3 +68,12 @@ Backups, old/new releases and additive schema are retained. It never restores a 
 automatically or destroys later user writes. The old UI cannot access new library fields;
 after any manual downgrade, pause writes until compatibility is assessed. Actual restore
 testing and real friend-device acceptance are separate checks from a successful upgrade.
+
+
+## 0.5 附件升级
+
+既有安装先执行新发布包中的 `python3 ops/configure-attachments.py`，再执行新包的 `bash ops/backup.sh` 和 `python3 ops/upgrade.py`。准备脚本只修改 Graybox 的 8443 站点、服务单元和运行环境，保留配置私有备份并核对原有 443 项目和 PostgreSQL。普通 upgrade.py 仍要求 Nginx 在它执行期间不变。
+
+附件持久化在 `/var/lib/graybox/attachments`，由 Graybox 账号独占；服务只获得该目录写权限。默认团队额度 1 GiB，通过 `GRAYBOX_ATTACHMENT_QUOTA_BYTES` 调整。备份是数据库 dump、附件 tar 和同名 manifest 的一对；恢复时必须一起使用，私有备份不上传公开仓库。备份仍需另行复制到其他设备以应对服务器丢失。
+
+图片 10 MiB、视频 50 MiB、单 HTML 5 MiB。上传路由单独允许 50 MiB，其他 API 保持 256 KiB。HTML 预览使用 60 秒授权入口，每次重新核对凭据与目标权限；沙箱仅允许内联脚本，不允许外部请求或父页面访问。

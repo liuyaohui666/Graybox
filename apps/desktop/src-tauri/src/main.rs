@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod session_store;
+mod attachment_bridge;
 use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value,json};
@@ -28,7 +29,7 @@ fn allowed_request(path:&str, method:&str)->bool {
  }
  let segments:Vec<_>=route.split('/').collect();let id_ok=|id:&str|!id.is_empty()&&id.chars().all(|c|c.is_ascii_alphanumeric()||"_-".contains(c));
  match (method,segments.as_slice()) {
-  ("GET",["me"|"health"|"workspaces"|"people"|"notifications"|"tags"|"activity"|"projects"|"experiments"|"ideas"|"collaboration"])=>true,
+  ("GET",["attachments"|"me"|"health"|"workspaces"|"people"|"notifications"|"tags"|"activity"|"projects"|"experiments"|"ideas"|"collaboration"])=>true,
   ("GET",["projects"|"experiments"|"ideas",id])=>id_ok(id),
   ("GET",["projects",id,"retrospectives"|"comments"|"agreement"])=>id_ok(id),
   ("POST",["projects",id,"agreement"])=>query.is_none()&&id_ok(id),
@@ -36,6 +37,9 @@ fn allowed_request(path:&str, method:&str)->bool {
   ("POST",["collaboration","notifications","read"])=>query.is_none(),
   ("POST",["notifications","read"])=>query.is_none(),
   ("POST",["commands"])=>true,
+  ("POST",["attachments","link"])=>query.is_none(),
+  ("POST",["attachments",id,"preview"])=>query.is_none()&&id_ok(id),
+  ("GET",["attachments",id,"content"])=>query.is_none()&&id_ok(id),
   ("POST",["profile","avatar"|"name"])=>query.is_none(),
   ("POST",["batches",id,"preview"|"undo"])=>id_ok(id),
   _=>false,
@@ -123,7 +127,7 @@ fn main(){tauri::Builder::default()
   Ok(())
  })
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{if window.label()=="main"{api.prevent_close();let _=window.hide();}}})
- .invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
+ .invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request,attachment_bridge::attachment_transfer]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
 #[cfg(test)] mod tests {
  use super::*;
  #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}

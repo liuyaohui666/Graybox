@@ -1,10 +1,10 @@
 # Graybox
 
-三人团队使用的想法、项目和实验记录工具。当前版本 **0.4.2**，数据保存在云服务器，Windows 客户端支持托盘和保存登录状态。
+三人团队使用的想法、项目和实验记录工具。当前版本 **0.5.0**，数据保存在云服务器，Windows 客户端支持托盘和保存登录状态。
 
 ## 下载与启动
 
-从 [Windows 下载页](https://github.com/liuyaohui666/Graybox/releases/tag/v0.4.2) 下载 `Graybox-0.4.2-Windows.zip`，解压整个文件夹到固定目录，然后双击 `Start-Graybox.vbs`。不要只移动 exe；这个入口不会弹命令窗口。`Start-Graybox.cmd` 仅供排查故障。需要桌面快捷方式时双击 `Create-Desktop-Shortcut.vbs`，之后请保留解压目录。
+从 [Windows 下载页](https://github.com/liuyaohui666/Graybox/releases/tag/v0.5.0) 下载 `Graybox-0.5.0-Windows.zip`，解压整个文件夹到固定目录，然后双击 `Start-Graybox.vbs`。不要只移动 exe；这个入口不会弹命令窗口。`Start-Graybox.cmd` 仅供排查故障。需要桌面快捷方式时双击 `Create-Desktop-Shortcut.vbs`，之后请保留解压目录。
 
 浏览器也可以打开 [Graybox 云端](https://api.qingsuworks.top:8443/)。日常使用不需要在电脑上运行数据库、API 或云服务器；自己的电脑关机不会影响其他成员。桌面客户端需要 Microsoft Edge WebView2 Runtime；Codex 接入另需 **Node.js 24**。
 
@@ -94,6 +94,14 @@ node "$GrayboxDir/runtime/client.mjs" sync status --cwd "$GrayboxProject"
 ### 5. MCP（可选）
 
 CLI 已能完成上述流程。需要 MCP 时，将 `config.toml.example` 的 Node、客户端和个人配置路径换成实际绝对路径，合并到用户选择的项目 `.codex/config.toml`；保留已有配置，不能擅自改全局设置。MCP 参数为 `runtime/client.mjs`、`mcp`、`serve`，每次工具调用仍传入实际绝对 `cwd`。
+
+## 图片、视频和网页演示
+
+项目、想法、实验的详情里都有 **附件与链接**。可上传 PNG/JPEG/WebP（10 MB 内）、MP4/WebM（50 MB 内）和单个自包含 HTML（5 MB 内），填写说明后，团队成员可以直接查看。大项目填写 GitHub 地址；附件不会随公开源码仓库一起公开。
+
+HTML 的 CSS、JavaScript、图片等资源需内联；不支持 ZIP、外部依赖、网络请求或后端。演示在隔离窗口中运行。团队附件默认总额度为 1 GB，由部署者调整。
+
+也可以对 Codex 说“把这张截图和这段视频写入 Graybox 的这个实验”。它使用自己的配对权限，核对目标，只上传指定文件，并在成功后读取服务器确认。失败重试复用原操作，不重复上传。CLI/MCP 的格式和恢复规则见 [附件说明](skills/graybox/references/attachments.md)。
 
 ## 登录与故障
 

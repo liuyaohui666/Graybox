@@ -47,3 +47,6 @@ experiment_create still requires exactly one series_id or series_name. experimen
 ## Example intent
 
 “同步这次结果” with an active experiment and an older verified cursor: read accessible intervening turns/Git/test logs, recover a pending exact write if present, then append actual evidence or update progress for that experiment. If this turn only describes a standalone new idea, explicitly create it with project_id null and report its UUID; do not link it merely because a project is bound.
+# 附件同步
+
+业务记录读取核对后，按 [attachments.md](attachments.md) 上传明确指定的截图、视频、自包含 HTML 或公共 HTTPS 链接。附件日志单独持久保存稳定键，附件失败不改变业务 checkpoint；相同输入恢复原操作。

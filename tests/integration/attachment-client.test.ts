@@ -1,0 +1,34 @@
+import {test,expect,vi} from 'vitest';
+import {Pool} from 'pg';
+import {config} from 'dotenv';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+import {buildApp} from '../../apps/api/src/app.ts';
+import {migrate} from '../../packages/db/src/migrate.ts';
+import {seedDatabase} from '../../packages/db/src/seed.ts';
+import {Service} from '../../packages/core/src/service.ts';
+import {attachmentWrite,attachmentList} from '../../packages/local-context/src/attachment-sync.ts';
+import {png} from '../fixtures/avatar.ts';
+config({quiet:true});
+test('private client receipts roundtrip and same-operation retry remain scope checked',async()=>{
+ for(const key of ['GRAYBOX_TEST_DATABASE_URL','GRAYBOX_TEST_ADMIN_URL'])if(new URL(process.env[key]!).pathname!=='/graybox_test')throw Error('Isolated test DB required');
+ const admin=new Pool({connectionString:process.env.GRAYBOX_TEST_ADMIN_URL}),runtime=new Pool({connectionString:process.env.GRAYBOX_TEST_DATABASE_URL}),dir=await mkdtemp(join(tmpdir(),'graybox-client-attachment-'));
+ process.env.GRAYBOX_ATTACHMENT_DIR=join(dir,'bytes');const app=await buildApp({pool:runtime,mode:'local'});
+ try{await admin.query('DROP SCHEMA IF EXISTS graybox CASCADE');await migrate(admin);const f=await seedDatabase(admin),service=new Service(runtime),principal=await service.authenticate(f.tokens.owner_agent);
+ const project=await service.command(principal,{type:'project_create',payload:{workspace_id:f.workspace_id,name:'Client attachments'},batch_id:randomUUID(),idempotency_key:randomUUID()});
+ const endpoint=await app.listen({host:'127.0.0.1',port:0});const health=(await (await fetch(endpoint+'/v1/health')).json()).data;
+ const cwd=join(dir,'project');await mkdir(join(cwd,'.graybox'),{recursive:true});const configPath=join(dir,'private','client.json'),credentials=join(dir,'private','credentials.json');await mkdir(join(dir,'private'));
+ const me=(await (await fetch(endpoint+'/v1/me',{headers:{authorization:`Bearer ${f.tokens.owner_agent}`}})).json()).data;
+ await writeFile(credentials,JSON.stringify({mode:'local-demonstration-only',workspace_id:f.workspace_id,agents:[{id:me.agent_id,human_id:me.human_id,name:'test',token:f.tokens.owner_agent,project_ids:null}]}));
+ await writeFile(configPath,JSON.stringify({version:1,environments:[{environment_id:health.environment_id,endpoint,credentials_file:credentials,agent_id:me.agent_id}]}));
+ await writeFile(join(cwd,'.graybox','project.json'),JSON.stringify({version:1,environment_id:health.environment_id,workspace_id:f.workspace_id,project_id:project.id}));
+ const path=join(cwd,'shot.png');await writeFile(path,Buffer.from(png(128).split(',')[1]!,'base64'));const input={entity_type:'project',entity_id:project.id,path,caption:'Actual client'};
+ const actualFetch=globalThis.fetch;let lost=true;vi.stubGlobal('fetch',async(url:Parameters<typeof fetch>[0],init?:RequestInit)=>{const response=await actualFetch(url,init);if(String(url).endsWith('/attachments/upload')&&lost){lost=false;await response.text();throw Error('lost committed response');}return response;});
+ await expect(attachmentWrite({cwd,configPath},input,'upload')).rejects.toMatchObject({code:'CONNECTION_FAILED'});vi.unstubAllGlobals();
+ const first=await attachmentWrite({cwd,configPath},input,'upload'),retry=await attachmentWrite({cwd,configPath},input,'upload');expect(retry.operation_id).toBe(first.operation_id);expect(retry.response?.id).toBe(first.response?.id);expect(await attachmentList({cwd,configPath},{entity_type:'project',entity_id:project.id})).toHaveLength(1);
+ const link={entity_type:'project',entity_id:project.id,name:'Repository',caption:'',kind:'repository',url:'https://github.com/example/graybox'};const linked=await attachmentWrite({cwd,configPath},link,'link');expect((await attachmentWrite({cwd,configPath},link,'link')).operation_id).toBe(linked.operation_id);expect(await attachmentList({cwd,configPath},{entity_type:'project',entity_id:project.id})).toHaveLength(2);
+ await admin.query('UPDATE graybox.credentials SET project_ids=$1 WHERE token_hash=$2',[[],createHash('sha256').update(f.tokens.owner_agent).digest('hex')]);await expect(attachmentWrite({cwd,configPath},input,'upload')).rejects.toMatchObject({code:'AGENT_REQUIRED'});
+ }finally{vi.unstubAllGlobals();await app.close();await runtime.end();await admin.end();delete process.env.GRAYBOX_ATTACHMENT_DIR;await rm(dir,{recursive:true,force:true});}
+});
