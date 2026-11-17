@@ -107,7 +107,7 @@ async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:
  if !allowed_request(&path,&method){return Err("请求路径或方法不被允许。".into());}
  let snapshot=session_snapshot()?;
  if snapshot.endpoint.is_some() && !profile_id.is_empty() && snapshot.profile.as_ref().and_then(|p|p["id"].as_str())!=Some(profile_id.as_str()) {return Err("请求身份与当前会话不匹配。".into());}
- let (endpoint,token)=if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
+ let (endpoint,token)=if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1"){("http://127.0.0.1:4318".into(),None)}else if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
  if session().lock().unwrap().generation!=snapshot.generation {return Err("会话已变更，请重新读取数据。".into());}
  let result=fetch_api(&endpoint,&path,&method,body,token.clone()).await?;
  if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.generation==snapshot.generation && s.token==token {session_store::clear()?;s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;}}

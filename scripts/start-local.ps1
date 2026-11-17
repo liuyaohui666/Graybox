@@ -1,6 +1,27 @@
 param([switch]$ServicesOnly,[string]$Executable)
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if ($env:GRAYBOX_LOCAL_ONLY -eq '1') {
+  Push-Location $repoRoot
+  try {
+    $node = (Get-Command node.exe -ErrorAction Stop).Source
+    $health = $null
+    try { $health = Invoke-RestMethod 'http://127.0.0.1:4318/v1/health' -TimeoutSec 2 -MaximumRedirection 0 } catch {}
+    if (-not $health) {
+      $apiProcess = Start-Process -FilePath $node -ArgumentList @('--import','tsx','apps/local-api/src/main.ts') -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $repoRoot '.local/standalone-api.stdout.log') -RedirectStandardError (Join-Path $repoRoot '.local/standalone-api.stderr.log') -PassThru
+      for ($attempt=0; $attempt -lt 20; $attempt++) { Start-Sleep -Milliseconds 250; try { $health=Invoke-RestMethod 'http://127.0.0.1:4318/v1/health' -TimeoutSec 2 } catch {}; if($health){break} }
+    }
+    if (-not $health -or $health.data.mode -ne 'local') { throw 'Standalone SQLite API is unavailable.' }
+    if (-not $ServicesOnly) {
+      if (-not $Executable) { $Executable=Join-Path $repoRoot 'apps/desktop/src-tauri/target/debug/graybox-desktop.exe' }
+      $Executable=[IO.Path]::GetFullPath($Executable)
+      if (-not (Test-Path -LiteralPath $Executable)) { throw 'Build the native desktop first.' }
+      $appProcess=Start-Process -FilePath $Executable -WorkingDirectory $repoRoot -PassThru
+      Write-Host "Graybox standalone desktop started (PID $($appProcess.Id))."
+    }
+  } finally { Pop-Location }
+  exit 0
+}
 $taskRoot = Split-Path $repoRoot -Parent
 $dataRoot = Join-Path $taskRoot 'work/postgres/data'
 $pgControl = 'C:/Program Files/PostgreSQL/18/bin/pg_ctl.exe'
