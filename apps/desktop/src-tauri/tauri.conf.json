@@ -9,7 +9,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{"label":"main","title":"Graybox · 个人知识工作台","width":1320,"height":900,"minWidth":800,"minHeight":620}],
+    "windows": [{"label":"main","title":"Graybox · 个人知识工作台","theme":"Dark","width":1320,"height":900,"minWidth":800,"minHeight":620}],
     "security": {"csp":"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src https: http://127.0.0.1:*"}
   },
   "bundle": {"active":true,"targets":["nsis"],"shortDescription":"个人项目、想法与学习记录","category":"DeveloperTool","windows":{"webviewInstallMode":{"type":"skip"}}}
