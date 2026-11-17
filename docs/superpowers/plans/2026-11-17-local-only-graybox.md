@@ -124,3 +124,19 @@
 - [ ] 更新 README 为个人本地版说明，标明云端团队版是历史版本和数据导入来源。
 - [ ] 运行 `pnpm typecheck`、`pnpm test`、`pnpm build:web` 和 Tauri debug build。
 - [ ] 保存构建哈希、迁移统计和 round-trip 结果，区分自动化验证与用户验收。
+
+### Task 8: 学习模块第一版
+
+**Files:**
+- Create: `apps/desktop/src/learning.tsx`
+- Modify: `apps/desktop/src/main.tsx`
+- Modify: `apps/desktop/src/navigation-icon.tsx`
+- Modify: `apps/desktop/src/workbench.css`
+- Modify: `packages/local-db/src/database.ts`
+- Test: `tests/unit/learning.test.tsx`
+
+- [ ] 增加学习方向、分支和知识点的本地模型及 SQLite 表。
+- [ ] 在左侧主导航加入“学习”，展示方向列表、分支和知识点状态筛选。
+- [ ] 支持新建学习方向；知识点编辑接入本地 API 后再打开完整编辑表单。
+- [ ] 学习记录进入导出清单和迁移包统计。
+- [ ] 验证网络断开时学习模块仍可展示和保存。

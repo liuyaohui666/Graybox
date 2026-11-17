@@ -20,8 +20,11 @@ import {TeamSpace,MemberPage} from "./team-space.tsx";
 import {SocialProvider,NotificationEntry,Inbox} from "./team-social.tsx";
 import { ProjectLibrary } from "./project-library.tsx";
 import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
+import {CollaborationWorkbench} from './collaboration-workbench.tsx';
+import './collaboration.css';
+import {LearningPage} from './learning.tsx';
 
-type Page = "home" | "projects" | "experiments" | "activity" | "member" | "messages";
+type Page = "home" | "projects" | "experiments" | "learning" | "activity" | "member" | "messages";
 type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
 const typeNames: Record<string, string> = {
   git: "Git 记录",
@@ -41,7 +44,7 @@ const date = (s?: string) =>
       })
     : "—";
 
-function App() {
+function LegacyApp() {
   const mode = useContext(ConnectionModeContext);
   const pendingWrite = useSyncExternalStore(writeSafety.subscribe, writeSafety.snapshot);
   const [people, setPeople] = useState<Profile[]>([]),
@@ -334,20 +337,13 @@ function App() {
             Graybox
           </div>
         </div>
-        <div className="workspace">
-          <span className="workspace-icon">G</span>
-          <div>
-            团队空间<small>{mode === "cloud" ? "云端协作" : "本地工作台"}</small>
-          </div>
-          <span className="live-dot" />
-        </div>
-        <div className="nav-label">工作台</div>
         <nav inert={busy || !!pendingWrite}>
           {(
             [
-              ["home", "◫", "首页"],
-              ["projects", "▣", "项目"],
+              ["home", "◫", "项目"],
+              ["projects", "▣", "全部项目"],
               ["experiments", "◇", "实验"],
+              ["learning", "◒", "学习"],
               ["activity", "≋", "活动记录"],
             ] as const
           ).map(([id, , label]) => (
@@ -376,9 +372,10 @@ function App() {
             <span className="crumb">/</span>
             {
               {
-                home: "概览",
-                projects: "项目",
+                home: "项目",
+                projects: "全部项目",
                 experiments: "实验",
+                learning: "学习",
                 activity: "活动记录",
                 member: "成员主页",
                 messages: "我的消息",
@@ -387,7 +384,6 @@ function App() {
           </div>
           <NotificationEntry locked={busy||!!pendingWrite} open={()=>navigate("messages")}/>
           <span className="local-status">
-            <span className="live-dot" />
             {mode === "cloud" ? "云端" : "本地"}
           </span>
         </header>
@@ -397,9 +393,10 @@ function App() {
               <h1>
                 {
                   {
-                    home: "工作台",
-                    projects: "项目",
+                    home: "项目",
+                    projects: "全部项目",
                     experiments: "实验记录",
+                learning: "学习",
                     activity: "活动记录",
                     member: "成员主页",
                     messages: "我的消息",
@@ -421,7 +418,7 @@ function App() {
             >
               ＋{" "}
               {page !== "experiments" || projects.length === 0
-                ? "新建项目"
+                ? "新建想法"
                 : "新建实验"}
             </button>
           </div>
@@ -447,7 +444,7 @@ function App() {
               </button>
             </div>
           )}
-          {!loaded && !error && !refreshError && <div className="empty">正在读取研发记录…</div>}
+          {!loaded && !error && !refreshError && <div className="empty">正在读取项目…</div>}
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
@@ -455,8 +452,9 @@ function App() {
                 {page === "member" && !socialProject && <MemberPage id={memberId} projects={projects} locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}} back={()=>navigate("home")}/>}
                 {page === "messages" && !socialProject && <Inbox locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}}/>}
                 {(page === "member" || page === "messages") && !!socialProject && <ProjectLibrary key={`${navigationGeneration}:${socialProject}`} profile={profile} page="projects" projects={projects} experiments={experiments} createdId={socialProject} busy={busy} setBusy={setBusy} send={send} refresh={()=>refresh()} tagFilter={libraryTag} openTag={openLibraryTag} backLabel={page==="member"?"成员主页":"消息箱"} onBack={()=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject("");}} openExperiment={id=>{if(navigate("experiments"))void showExperiment(id);}}/>}
-                {(page === "home" || page === "projects") && <ProjectLibrary key={navigationGeneration} profile={profile} page={page} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={openLibraryTag} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
-                {page === "experiments" && (
+                {(page === "home" || page === "projects") && <ProjectLibrary key={navigationGeneration} profile={profile} page={page === "home" ? "home" : "projects"} projects={projects} experiments={experiments} createdId={createdProject} busy={busy} setBusy={setBusy} send={send} refresh={() => refresh()} tagFilter={libraryTag} openTag={openLibraryTag} openExperiment={(id) => {if(navigate("experiments"))void showExperiment(id);}} />}
+              {page === "learning" && <LearningPage />}
+              {page === "experiments" && (
                   <div className="filters">
                     <input
                       aria-label="筛选实验"
@@ -718,7 +716,7 @@ function App() {
           )}
           <footer className="footer">
             <span>Graybox</span>
-            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.2</span>
+            <span>{mode === "cloud" ? "云端版本" : "本地版本"} 0.3.3</span>
           </footer>
         </div>
       </main>
@@ -728,7 +726,7 @@ function App() {
             <h2>
               {
                 {
-                  project: "新建项目",
+                  project: "新建想法",
                   experiment: "开启一次实验",
                   summary: "记录本次总结",
                   evidence: "添加技术证据",
@@ -937,6 +935,15 @@ function App() {
       </dialog>
     </div></SocialProvider></PeopleProvider>
   );
+}
+function App(){
+ const mode=useContext(ConnectionModeContext);
+ const pending=useSyncExternalStore(writeSafety.subscribe,writeSafety.snapshot);
+ const [profile,setProfile]=useState<Profile>(),[error,setError]=useState(''),[accountBusy,setAccountBusy]=useState(false);
+ useEffect(()=>{let alive=true;void profiles().then(value=>{if(alive)setProfile(value[0]);}).catch(e=>{if(alive)setError(e.message);});return()=>{alive=false;};},[]);
+ if(error)return <main className="session"><p role="alert">{error}</p><button onClick={()=>window.location.reload()}>重新连接</button></main>;
+ if(!profile)return <main className="session" role="status">正在读取账号…</main>;
+ return <PeopleProvider profile={profile.id} mode={mode}><CollaborationWorkbench profile={profile.id} account={<SidebarAccount profile={profile.id} person={profile} locked={accountBusy||!!pending} setBusy={setAccountBusy}/>} /></PeopleProvider>;
 }
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
