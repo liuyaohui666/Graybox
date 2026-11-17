@@ -946,6 +946,7 @@ function App(){
  useEffect(()=>{let alive=true;void profiles().then(value=>{if(alive)setProfile(value[0]);}).catch(e=>{if(alive)setError(e.message);});return()=>{alive=false;};},[]);
  if(error)return <main className="session"><p role="alert">{error}</p><button onClick={()=>window.location.reload()}>重新连接</button></main>;
  if(!profile)return <main className="session" role="status">正在读取账号…</main>;
+ if(mode==='local')return <PeopleProvider profile={profile.id} mode={mode}><LocalWorkbench profile={profile.id} person={profile} busy={accountBusy||!!pending} setBusy={setAccountBusy}/></PeopleProvider>;
  return <PeopleProvider profile={profile.id} mode={mode}><CollaborationWorkbench profile={profile.id} account={<SidebarAccount profile={profile.id} person={profile} locked={accountBusy||!!pending} setBusy={setAccountBusy}/>} /></PeopleProvider>;
 }
 createRoot(document.getElementById("root")!).render(

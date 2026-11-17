@@ -9,6 +9,16 @@ const root=resolve(args.find((v,i)=>v==='--root'?args[i+1]:undefined)||process.e
 mkdirSync(root,{recursive:true});
 const db=new DatabaseSync(resolve(root,'graybox.sqlite'));
 db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+db.exec(`CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ideas(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),name TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tags(name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS attachments(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,relative_path TEXT NOT NULL,sha256 TEXT NOT NULL,data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS avatars(id TEXT PRIMARY KEY,relative_path TEXT NOT NULL,sha256 TEXT NOT NULL,data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS activities(id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS learning_directions(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS learning_branches(id TEXT PRIMARY KEY,direction_id TEXT NOT NULL REFERENCES learning_directions(id) ON DELETE CASCADE,name TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS learning_knowledge(id TEXT PRIMARY KEY,branch_id TEXT NOT NULL REFERENCES learning_branches(id) ON DELETE CASCADE,name TEXT NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',review TEXT,tags TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);`);
 const now=()=>new Date().toISOString();
 const value=(name,fallback='')=>{const i=args.indexOf(name);return i>=0?args[i+1]??fallback:fallback;};
 const jsonInput=()=>{const path=value('--input');if(!path) return {};return JSON.parse(readFileSync(resolve(path),'utf8'));};
