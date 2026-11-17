@@ -23,6 +23,7 @@ import { SessionGate, ConnectionModeContext } from "./cloud-ui.tsx";
 import {CollaborationWorkbench} from './collaboration-workbench.tsx';
 import './collaboration.css';
 import {LearningPage} from './learning.tsx';
+import {LocalWorkbench} from './local-workbench.tsx';
 
 type Page = "home" | "projects" | "experiments" | "learning" | "activity" | "member" | "messages";
 type DialogKind = "project" | "experiment" | "summary" | "evidence" | null;
@@ -328,6 +329,8 @@ function LegacyApp() {
     );
   const projectName = (id: string) =>
     projects.find((p) => p.id === id)?.name ?? "项目";
+  if (mode === "local")
+    return <PeopleProvider profile={profile} mode={mode}><LocalWorkbench profile={profile} person={activeProfile} busy={busy||!!pendingWrite} setBusy={setBusy}/></PeopleProvider>;
   return (
     <PeopleProvider profile={profile} mode={mode}><SocialProvider profile={profile} setBusy={setBusy}><div className="shell">
       <aside className="sidebar">
