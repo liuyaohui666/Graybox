@@ -461,6 +461,7 @@ main.session { margin: 64px auto; padding: 32px; max-width: 560px; border: 1px s
 .local-workbench .secondary:hover:not(:disabled){background:var(--selected);border-color:var(--border-hover)}
 .local-workbench .text-button{color:var(--muted)}
 .local-workbench .text-button:hover:not(:disabled){color:var(--accent)}
+.local-create{position:relative;display:flex;align-items:flex-start}.local-create-trigger{width:42px;height:42px;padding:0;border:1px solid #F8F8F2;border-radius:7px;background:transparent;color:#F8F8F2;font-size:25px;line-height:1;cursor:pointer}.local-create-trigger:hover{background:#F8F8F2;color:var(--paper)}.local-create-menu{position:absolute;right:0;top:50px;z-index:10;display:grid;gap:4px;width:150px;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:7px;box-shadow:0 12px 30px #0008}.local-create-menu button{padding:9px 10px;border:0;border-radius:5px;background:transparent;color:var(--ink);text-align:left;font-size:14px;cursor:pointer}.local-create-menu button:hover:not(:disabled){background:var(--selected)}.local-create-menu button:disabled{opacity:.45;cursor:default}
 .local-workbench .notice{background:#3A3B46;border-color:var(--border-hover);color:var(--ink)}
 .local-workbench .error{background:#452D35;border-color:#A85C72;color:#FFDDE8}
 
