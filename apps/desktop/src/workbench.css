@@ -465,7 +465,7 @@ main.session { margin: 64px auto; padding: 32px; max-width: 560px; border: 1px s
 .local-workbench .error{background:#452D35;border-color:#A85C72;color:#FFDDE8}
 
 /* Codex-style window hierarchy: chrome, rail, workspace sidebar, content. */
-.local-workbench{display:grid;grid-template-rows:38px minmax(0,1fr);min-height:100vh;background:var(--paper)}
+.local-workbench{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:38px minmax(0,1fr);min-height:100vh;background:var(--paper)}
 .local-chrome{display:flex;align-items:center;gap:20px;padding:0 14px;background:#111114;color:#AFAFB8;border-bottom:1px solid #111114;font-size:14px}
 .local-chrome-nav,.local-chrome nav{display:flex!important;flex-direction:row;align-items:center;gap:4px;height:38px;flex-wrap:nowrap}.local-chrome nav button{display:inline-flex;align-items:center;white-space:nowrap}.local-chrome button{border:0;background:transparent;color:#AFAFB8;padding:4px 8px;font-size:14px;border-radius:5px}.local-chrome button:hover{background:#292A32;color:var(--ink)}
 .local-layout{display:grid;grid-template-columns:68px 336px minmax(0,1fr);min-height:0}
