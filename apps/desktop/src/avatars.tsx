@@ -1,7 +1,10 @@
 import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
 import {ProfileEditor} from './profile-editor.tsx';
 import {request,sessionGeneration,type Profile} from './platform.ts';
 import {AvatarGeneration,displayName,personLabel,prepareAvatar} from './avatar-model.ts';
+import {AccountActionsContext} from './account-actions.tsx';
+import {invoke} from '@tauri-apps/api/core';
 export interface Person extends Omit<Profile,'role'> {role?:string;avatar_data?:string|null}
 export const PeopleContext=createContext<{people:Person[];mode:'local'|'cloud';error?:string;refresh:()=>Promise<void>}>({people:[],mode:'cloud',refresh:async()=>{}});
 export function PeopleProvider({profile,mode,children}:{profile:string;mode:'local'|'cloud';children:React.ReactNode}) {
@@ -29,10 +32,12 @@ export function SidebarAccount(props:{profile:string;person?:Person;locked:boole
  return <div className="profile"><AvatarEditor {...props}/><span className="account-name">{current?personLabel(current,mode):'连接中'}</span></div>;
 }
 export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;person?:Person;locked:boolean;setBusy:(busy:boolean)=>void}) {
+ const [menuPosition,setMenuPosition]=useState<{left:number;bottom:number}|null>(null),floating=useRef<HTMLDivElement>(null);
+ const actions=useContext(AccountActionsContext);
  const {people,mode,refresh}=useContext(PeopleContext),guard=useRef(new AvatarGeneration()),active=useRef(profile),writing=useRef(false),[message,setMessage]=useState(''),[editing,setEditing]=useState(false);active.current=profile;
  const current=people.find(p=>p.id===profile)??person,input=useRef<HTMLInputElement>(null),menu=useRef<HTMLDetailsElement>(null);
  useEffect(()=>{guard.current.cancel();setMessage('');setEditing(false);if(menu.current)menu.current.open=false;return()=>guard.current.cancel();},[profile]);
- useEffect(()=>{const close=(event:PointerEvent)=>{if(menu.current&&!menu.current.contains(event.target as Node))menu.current.open=false;};document.addEventListener('pointerdown',close);return()=>document.removeEventListener('pointerdown',close);},[]);
+ useEffect(()=>{const close=(event:PointerEvent)=>{if(menu.current&&!menu.current.contains(event.target as Node)&&!floating.current?.contains(event.target as Node)){menu.current.open=false;setMenuPosition(null);}};const reposition=()=>{if(menu.current){menu.current.open=false;setMenuPosition(null);}};document.addEventListener('pointerdown',close);window.addEventListener('resize',reposition);return()=>{document.removeEventListener('pointerdown',close);window.removeEventListener('resize',reposition);};},[]);
  async function save(file:File|null) {
   if(!profile||locked||writing.current)return;writing.current=true;setBusy(true);setMessage('');
   const token=guard.current.begin(profile,sessionGeneration());
@@ -44,5 +49,50 @@ export function AvatarEditor({profile,person,locked,setBusy}:{profile:string;per
   }catch(e){if(guard.current.current(token,active.current,sessionGeneration()))setMessage((e as Error).message);}
   finally{writing.current=false;setBusy(false);}
  }
- return <><details ref={menu} className="avatar-editor" onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;menu.current.querySelector('summary')?.focus();}}}><summary role="button" aria-label="头像选项" title="个人资料与头像"><Avatar person={current} mode={mode}/></summary><div className="avatar-menu"><button type="button" disabled={locked||!current} onClick={()=>{if(menu.current)menu.current.open=false;setEditing(true);}}>个人资料</button><button type="button" disabled={locked} onClick={()=>input.current?.click()}>更换头像</button><input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/><button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>{message&&<p role="status">{message}</p>}</div></details>{editing&&current&&<ProfileEditor profile={profile} initialName={displayName(current,mode)} locked={locked} setBusy={setBusy} refresh={refresh} close={()=>setEditing(false)}/>}</>;
+ async function exportData() {
+  const target=window.prompt('迁移包保存路径','D:\\Graybox\\backups\\graybox-backup.graybox');
+  if (!target) return;
+  try { const result=await invoke<{path:string;sha256:string}>('data_export',{target}); setMessage(`已导出：${result.path}`); }
+  catch (e) { setMessage((e as Error).message); }
+ }
+ async function validateData() {
+  const path=window.prompt('迁移包路径','D:\\Graybox\\backups\\graybox-backup.graybox');
+  if (!path) return;
+  try { await invoke('data_validate',{path}); setMessage('迁移包校验通过。'); }
+  catch (e) { setMessage((e as Error).message); }
+ }
+ async function importData() {
+  const path=window.prompt('迁移包路径','D:\\Graybox\\backups\\graybox-backup.graybox');
+  if (!path) return;
+  try { await invoke('data_import',{path}); setMessage('已导入数据。请重启 Graybox 以读取完整数据。'); }
+  catch (e) { setMessage((e as Error).message); }
+ }
+ return <>
+  <details ref={menu} className="avatar-editor" onToggle={()=>{
+   if(menu.current?.open){const r=menu.current.getBoundingClientRect();setMenuPosition({left:Math.max(12,Math.min(r.left,window.innerWidth-236)),bottom:Math.max(12,window.innerHeight-r.top+10)});}
+   else setMenuPosition(null);
+  }} onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;menu.current.querySelector('summary')?.focus();}}}>
+   <summary role="button" aria-label="头像选项" title="个人资料与头像"><Avatar person={current} mode={mode}/></summary>
+   {menuPosition&&createPortal(
+    <div ref={floating} className="avatar-menu avatar-menu-floating" style={{position:'fixed',left:menuPosition.left,bottom:menuPosition.bottom}} onKeyDown={e=>{if(e.key==='Escape'&&menu.current){menu.current.open=false;setMenuPosition(null);menu.current.querySelector('summary')?.focus();}}}>
+     <button type="button" disabled={locked||!current} onClick={()=>{if(menu.current)menu.current.open=false;setEditing(true);}}>个人资料</button>
+     <button type="button" disabled={locked} onClick={()=>input.current?.click()}>更换头像</button>
+     <input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" disabled={locked} onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void save(file);}}/>
+     <button type="button" disabled={locked||!current?.avatar_data} onClick={()=>void save(null)}>恢复默认头像</button>
+     {mode==='local'&&<>
+      <button type="button" disabled={locked} onClick={()=>void exportData()}>导出数据</button>
+      <button type="button" disabled={locked} onClick={()=>void validateData()}>校验迁移包</button>
+      <button type="button" disabled={locked} onClick={()=>void importData()}>导入数据</button>
+     </>}
+     {mode==='cloud'&&actions&&<>
+      <button type="button" disabled={locked||actions.busy} onClick={()=>{if(menu.current)menu.current.open=false;actions.manage();}}>团队管理</button>
+      <button type="button" disabled={locked||actions.busy} onClick={actions.logout}>退出登录</button>
+      {actions.error&&<p role="alert">{actions.error}</p>}
+     </>}
+     {message&&<p role="status">{message}</p>}
+    </div>,document.body
+   )}
+  </details>
+  {editing&&current&&<ProfileEditor profile={profile} initialName={displayName(current,mode)} locked={locked} setBusy={setBusy} refresh={refresh} close={()=>setEditing(false)}/>} 
+ </>;
 }

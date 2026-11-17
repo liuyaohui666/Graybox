@@ -7,7 +7,9 @@ if ($env:GRAYBOX_LOCAL_ONLY -eq '1') {
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $health = $null
     try { $health = Invoke-RestMethod 'http://127.0.0.1:4318/v1/health' -TimeoutSec 2 -MaximumRedirection 0 } catch {}
-    if (-not $health) {
+    if (-not $health -or $health.data.mode -ne 'local' -or $health.data.environment_id -ne 'local-sqlite') {
+      $stale = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*apps/api/src/main.ts*' -or $_.CommandLine -like '*apps/local-api/src/main.ts*' }
+      if ($stale) { $stale | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
       $apiProcess = Start-Process -FilePath $node -ArgumentList @('--import','tsx','apps/local-api/src/main.ts') -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $repoRoot '.local/standalone-api.stdout.log') -RedirectStandardError (Join-Path $repoRoot '.local/standalone-api.stderr.log') -PassThru
       for ($attempt=0; $attempt -lt 20; $attempt++) { Start-Sleep -Milliseconds 250; try { $health=Invoke-RestMethod 'http://127.0.0.1:4318/v1/health' -TimeoutSec 2 } catch {}; if($health){break} }
     }

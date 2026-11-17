@@ -1,6 +1,25 @@
 # 分享包安装与配对
 
-解压整个 Graybox 客户端包到固定目录。需要 Node.js 24（或已安装 Graybox 自带的 Node）；无需 pnpm/node_modules。运行 `node C:/工具/Graybox/runtime/client.mjs help`。
+## 本地个人版
+
+本机当前使用 D 盘本地版，不需要注册、登录、服务器或团队配对。双击桌面的“Graybox 本地开发版”快捷方式即可启动，数据保存在 `D:\\Graybox`。Codex 需要写入时，在本仓库绝对路径下运行：
+
+```powershell
+node scripts/local-graybox.mjs list
+node scripts/local-graybox.mjs record --input C:/临时/graybox-record.json
+```
+
+`graybox-record.json` 可以是项目、想法或实验。示例：
+
+```json
+{"type":"idea","name":"新的尝试","body":"记录可验证的想法","project_id":null,"priority":"medium","tags":["待验证"]}
+```
+
+项目内实验必须填写真实 `project_id`。每次补写前先查看 `list` 和当前项目目录，逐条核对已有内容，保留原文和原有附件，不重复创建同一条记录。写入后再次运行 `list`，把新记录 ID、来源提交或测试输出写入回复。迁移使用桌面端头像菜单的 `.graybox` 导出与导入功能。
+
+以下云端配对说明仅适用于用户明确选择团队版本的工作，不适用于本地个人版。
+
+解压整个 Graybox 客户端包到固定目录。需要 Node.js 24；无需 pnpm/node_modules。运行 `node C:/工具/Graybox/runtime/client.mjs help`。
 
 将 skills/graybox 整个文件夹复制到自己选择的项目 `.agents/skills/graybox`；若明确希望所有项目可用，再自行复制到个人 `.codex/skills/graybox`。客户端不会安装或修改全局 Codex 设置。复制后重启相应 Codex 会话。
 
@@ -10,7 +29,7 @@
 node C:/工具/Graybox/runtime/client.mjs auth pair-start --endpoint https://你的服务域名 --name 我的Codex --config C:/Users/我/Graybox-private/client.json
 ```
 
-在 Graybox 桌面端登录自己的账号，打开“团队与 Agent”并输入返回的配对码。当前界面会授权全部项目；确认这是你希望授予该 Agent 的范围后批准配对。然后执行：
+在 Graybox 桌面端登录自己的账号，点击左下角头像 → “团队管理” → “Codex 配对”并输入返回的配对码。当前界面会授权全部项目；确认这是你希望授予该 Agent 的范围后批准配对。然后执行：
 
 ```powershell
 node C:/工具/Graybox/runtime/client.mjs auth pair-complete --config C:/Users/我/Graybox-private/client.json
@@ -18,7 +37,7 @@ $env:GRAYBOX_CLIENT_CONFIG='C:/Users/我/Graybox-private/client.json'
 node C:/工具/Graybox/runtime/client.mjs auth status
 ```
 
-配对输出和个人 JSON 是私人文件，不打包、提交 Git 或转发。失效或撤销后重新配对；`--replace` 仅在明确替换已有配置时使用。配对结束后 auth status 给出 environment UUID；workspace/project UUID 从实际项目读取，不猜测。
+配对输出和个人 JSON 是私人文件，不打包、提交 Git 或转发。失效或撤销后重新配对；`--replace` 仅在明确替换已有配置时使用。配对结束后 auth status 给出 environment UUID；workspace/project UUID 从实际项目读取，不猜测。分享包提供只读入口 `node runtime/list-projects.mjs`，在设置 GRAYBOX_CLIENT_CONFIG 后读取可访问项目及其真实 UUID；先让用户选择目标再绑定。
 
 为实际工作目录写 binding.json：
 ```json
@@ -33,4 +52,9 @@ node C:/工具/Graybox/runtime/client.mjs context --cwd C:/我的项目
 
 如需 MCP，将包中 config.toml.example 的绝对路径替换后，合并到用户明确选择的项目配置 `.codex/config.toml`。先保留其他已有配置；此示例不授权编辑全局设置。args 必须为 runtime/client.mjs、mcp、serve。MCP 仍为每次工具调用传显式 cwd，配对不替代项目绑定。
 
-账号角色与项目权限分开：创建者为项目 owner，其他人为 member；团队管理不能编辑别人的项目。项目 owner 可编辑元数据、实验/证据/验收与添加复盘，所有成员可阅读和评论。Agent 权限等于所属人类的项目权限与凭据范围的交集。创建者未知的历史项目未分配、只读。撤销还检查当前项目归属，已成功的原请求原键仅返回稳定收据。
+账号角色与业务权限分开：创建者为项目 owner，其他人为 member；团队管理不能编辑别人的项目。项目 owner 可编辑项目元数据与添加复盘；想法和实验有独立主导者，编辑内容、证据、提交与合并遵循实体主导权限。成员可参与、评论及创建自己的分支，人工验收由人类完成。Agent 权限等于所属人类的实际业务权限与凭据范围的交集。创建者未知的历史项目未分配、只读。撤销还检查当前项目归属，已成功的原请求原键仅返回稳定收据。
+
+协作命令、独立想法和持久增量同步的完整格式见 [sync.md](sync.md)。自然语言“写入 Graybox / 同步这次结果”使用 sync_status → sync_prepare → sync_execute，先持久保存稳定键，再核对服务器活动推进 checkpoint。
+# 附件配置
+
+附件操作要求可信个人配置在仓库外，使 `attachment-receipts` 私人日志不进入 Git。使用现有配对配置；命令与范围见 [attachments.md](attachments.md)。

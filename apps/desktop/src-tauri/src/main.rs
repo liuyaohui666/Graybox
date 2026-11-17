@@ -2,6 +2,7 @@
 mod session_store;
 mod attachment_bridge;
 mod learning_store;
+mod data_store;
 use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value,json};
@@ -129,7 +130,7 @@ fn main(){tauri::Builder::default()
   Ok(())
  })
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{if window.label()=="main"{api.prevent_close();let _=window.hide();}}})
- .invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request,attachment_bridge::attachment_transfer,learning_store::learning_list,learning_store::learning_create_direction,learning_store::learning_create_branch,learning_store::learning_create_knowledge]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
+ .invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request,attachment_bridge::attachment_transfer,learning_store::learning_list,learning_store::learning_create_direction,learning_store::learning_create_branch,learning_store::learning_create_knowledge,data_store::data_export,data_store::data_validate,data_store::data_import]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
 #[cfg(test)] mod tests {
  use super::*;
  #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}
