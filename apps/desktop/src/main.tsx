@@ -382,7 +382,7 @@ function LegacyApp() {
               }[page]
             }
           </div>
-          <NotificationEntry locked={busy||!!pendingWrite} open={()=>navigate("messages")}/>
+          {mode === "cloud" && <NotificationEntry locked={busy||!!pendingWrite} open={()=>navigate("messages")}/>} 
           <span className="local-status">
             {mode === "cloud" ? "云端" : "本地"}
           </span>
@@ -448,7 +448,7 @@ function LegacyApp() {
           {loaded && (
             <div className={detail ? "with-detail" : "without-detail"}>
               <section className="main-column" inert={busy}>
-                {(page === "home" || page === "projects") && <TeamSpace projects={projects} locked={busy||!!pendingWrite} openMember={id=>{if(navigate("member"))setMemberId(id);}}/>}
+                {(mode === "cloud" && (page === "home" || page === "projects")) && <TeamSpace projects={projects} locked={busy||!!pendingWrite} openMember={id=>{if(navigate("member"))setMemberId(id);}}/>}
                 {page === "member" && !socialProject && <MemberPage id={memberId} projects={projects} locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}} back={()=>navigate("home")}/>}
                 {page === "messages" && !socialProject && <Inbox locked={busy||!!pendingWrite} openProject={id=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject(id);}}/>}
                 {(page === "member" || page === "messages") && !!socialProject && <ProjectLibrary key={`${navigationGeneration}:${socialProject}`} profile={profile} page="projects" projects={projects} experiments={experiments} createdId={socialProject} busy={busy} setBusy={setBusy} send={send} refresh={()=>refresh()} tagFilter={libraryTag} openTag={openLibraryTag} backLabel={page==="member"?"成员主页":"消息箱"} onBack={()=>{if(!busy&&!mutationLock.current&&!writeSafety.snapshot())setSocialProject("");}} openExperiment={id=>{if(navigate("experiments"))void showExperiment(id);}}/>}
