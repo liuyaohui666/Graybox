@@ -1,4 +1,8 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
+mod session_store;
+mod attachment_bridge;
+mod learning_store;
+use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value,json};
 use std::{fs, time::Duration, sync::{Mutex,OnceLock}};
@@ -26,12 +30,17 @@ fn allowed_request(path:&str, method:&str)->bool {
  }
  let segments:Vec<_>=route.split('/').collect();let id_ok=|id:&str|!id.is_empty()&&id.chars().all(|c|c.is_ascii_alphanumeric()||"_-".contains(c));
  match (method,segments.as_slice()) {
-  ("GET",["me"|"health"|"workspaces"|"people"|"notifications"|"tags"|"activity"|"projects"|"experiments"])=>true,
-  ("GET",["projects"|"experiments",id])=>id_ok(id),
+  ("GET",["attachments"|"me"|"health"|"workspaces"|"people"|"notifications"|"tags"|"activity"|"projects"|"experiments"|"ideas"|"collaboration"])=>true,
+  ("GET",["projects"|"experiments"|"ideas",id])=>id_ok(id),
   ("GET",["projects",id,"retrospectives"|"comments"|"agreement"])=>id_ok(id),
   ("POST",["projects",id,"agreement"])=>query.is_none()&&id_ok(id),
+  ("GET",["collaboration","notifications"])=>true,
+  ("POST",["collaboration","notifications","read"])=>query.is_none(),
   ("POST",["notifications","read"])=>query.is_none(),
   ("POST",["commands"])=>true,
+  ("POST",["attachments","link"])=>query.is_none(),
+  ("POST",["attachments",id,"preview"])=>query.is_none()&&id_ok(id),
+  ("GET",["attachments",id,"content"])=>query.is_none()&&id_ok(id),
   ("POST",["profile","avatar"|"name"])=>query.is_none(),
   ("POST",["batches",id,"preview"|"undo"])=>id_ok(id),
   _=>false,
@@ -70,7 +79,7 @@ fn cloud_endpoint()->Result<Option<String>,String> {Ok(session_snapshot()?.endpo
  if endpoint.is_none() && std::env::var("GRAYBOX_CREDENTIALS_PATH").is_ok() { credentials()?; return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318"})); }
  Ok(json!({"mode":"cloud","endpoint":endpoint.unwrap_or_default(),"profile":snapshot.profile}))
 }
-#[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;} connection_info()}
+#[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; session_store::clear()?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;} connection_info()}
 #[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
 async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:Option<String>)->Result<Value,String> {
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(30)).build().map_err(|_|"无法创建连接。")?;
@@ -90,7 +99,7 @@ async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:
  if let Some(error)=result.get("error") {return Err(error.get("message").and_then(Value::as_str).unwrap_or("登录失败。").into());}
  let data=&result["data"]; let token=data["token"].as_str().ok_or("认证响应缺少凭据。")?.to_owned();
  let profile=data["profile"].clone(); if !profile.is_object(){return Err("认证响应缺少身份。".into());}
- {let mut s=session().lock().unwrap(); if s.generation!=generation || s.endpoint.as_ref().is_some_and(|value|value!=&endpoint) {return Err("服务地址已变更，请重新登录。".into());} s.endpoint=Some(endpoint.clone());s.token_origin=Some(endpoint);s.token=Some(token);s.profile=Some(profile.clone());s.generation+=1;}
+ {let mut s=session().lock().unwrap(); if s.generation!=generation || s.endpoint.as_ref().is_some_and(|value|value!=&endpoint) {return Err("服务地址已变更，请重新登录。".into());} session_store::save(&session_store::SavedSession{endpoint:endpoint.clone(),token:token.clone(),profile:profile.clone()})?;s.endpoint=Some(endpoint.clone());s.token_origin=Some(endpoint);s.token=Some(token);s.profile=Some(profile.clone());s.generation+=1;}
  Ok(json!({"profile":profile,"expires_at":data["expires_at"]}))
 }
 #[tauri::command] async fn api_request(profile_id:String,path:String,method:String,body:Option<Value>)->Result<Value,String> {
@@ -100,10 +109,26 @@ async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:
  let (endpoint,token)=if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
  if session().lock().unwrap().generation!=snapshot.generation {return Err("会话已变更，请重新读取数据。".into());}
  let result=fetch_api(&endpoint,&path,&method,body,token.clone()).await?;
- if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.generation==snapshot.generation && s.token==token {s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;}}
+ if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.generation==snapshot.generation && s.token==token {session_store::clear()?;s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;}}
  Ok(result)
 }
-fn main(){tauri::Builder::default().invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
+fn show_main(app:&tauri::AppHandle){if let Some(window)=app.get_webview_window("main"){let _=window.unminimize();let _=window.show();let _=window.set_focus();}}
+fn main(){tauri::Builder::default()
+ .plugin(tauri_plugin_single_instance::init(|app,_,_|show_main(app)))
+ .setup(|app|{
+  if let Some(saved)=session_store::load(){if trusted_origin(&saved.endpoint).ok().as_deref()==Some(saved.endpoint.as_str()) && std::env::var("GRAYBOX_SERVER_URL").ok().map(|v|trusted_origin(&v).ok().as_deref()==Some(saved.endpoint.as_str())).unwrap_or(true){let mut s=session().lock().unwrap();s.endpoint=Some(saved.endpoint.clone());s.token_origin=Some(saved.endpoint);s.token=Some(saved.token);s.profile=Some(saved.profile);}}
+  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
+  let open=MenuItem::with_id(app,"open","打开 Graybox",true,None::<&str>)?;
+  let quit=MenuItem::with_id(app,"quit","退出",true,None::<&str>)?;
+  let menu=Menu::with_items(app,&[&open,&quit])?;
+  let pixels:Vec<u8>=(0..32*32).flat_map(|i|{let x=i%32;let y=i/32;if (x>=7&&x<=23&&(y>=7&&y<=10||y>=21&&y<=24)) || (x>=7&&x<=10&&y>=7&&y<=24) || (x>=19&&x<=23&&y>=16&&y<=24) || (x>=16&&x<=23&&y>=16&&y<=19){[220,237,226,255]}else{[47,75,61,255]}}).collect();
+  TrayIconBuilder::with_id("graybox").icon(tauri::image::Image::new_owned(pixels,32,32)).tooltip("Graybox").menu(&menu).show_menu_on_left_click(false)
+   .on_menu_event(|app,event|match event.id.as_ref(){"open"=>show_main(app),"quit"=>app.exit(0),_=>{}})
+   .on_tray_icon_event(|tray,event|{if matches!(event,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){show_main(tray.app_handle());}}).build(app)?;
+  Ok(())
+ })
+ .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{if window.label()=="main"{api.prevent_close();let _=window.hide();}}})
+ .invoke_handler(tauri::generate_handler![connection_info,configure_endpoint,authenticate,local_profiles,api_request,attachment_bridge::attachment_transfer,learning_store::learning_list,learning_store::learning_create_direction,learning_store::learning_create_branch,learning_store::learning_create_knowledge]).run(tauri::generate_context!()).expect("Graybox desktop could not start");}
 #[cfg(test)] mod tests {
  use super::*;
  #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}
