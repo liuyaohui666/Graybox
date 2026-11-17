@@ -34,7 +34,7 @@
 推荐的数据目录：
 
 ```text
-%LOCALAPPDATA%/Graybox/
+D:\\Graybox/
 ├─ graybox.sqlite
 ├─ attachments/
 ├─ avatars/

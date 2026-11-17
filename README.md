@@ -1,104 +1,130 @@
-# Graybox · 本地 M1
+# Graybox
 
-研发实验记录桌面应用。当前交付是 **本机开发版**：Windows Tauri + React、Fastify API、PostgreSQL、共用 API 的 CLI/MCP。Supabase、远程协作、正式登录与发布安装包尚未完成。
+本地个人版的数据目录固定为 `D:\\Graybox`，包括 SQLite、附件、头像、备份和迁移临时文件；可通过 `GRAYBOX_DATA_ROOT` 指定其他盘符。不会默认把个人数据写入 C 盘。
 
-## 当前电脑运行
+三人团队使用的想法、项目和实验记录工具。当前版本 **0.5.0**，数据保存在云服务器，Windows 客户端支持托盘和保存登录状态。
 
-在仓库根目录执行：
+## 下载与启动
+
+从 [Windows 下载页](https://github.com/liuyaohui666/Graybox/releases/tag/v0.5.0) 下载 `Graybox-0.5.0-Windows.zip`，解压整个文件夹到固定目录，然后双击 `Start-Graybox.vbs`。不要只移动 exe；这个入口不会弹命令窗口。`Start-Graybox.cmd` 仅供排查故障。需要桌面快捷方式时双击 `Create-Desktop-Shortcut.vbs`，之后请保留解压目录。
+
+浏览器也可以打开 [Graybox 云端](https://api.qingsuworks.top:8443/)。日常使用不需要在电脑上运行数据库、API 或云服务器；自己的电脑关机不会影响其他成员。桌面客户端需要 Microsoft Edge WebView2 Runtime；Codex 接入另需 **Node.js 24**。
+
+GitHub 的 **Code → Download ZIP** 下载的是源码，不能替代 Releases 里的可运行客户端。
+
+## 公开下载不等于加入团队
+
+此仓库公开，任何人可以查看源码和下载客户端。**这不会让下载者自动加入现有团队，也不会公开团队项目、想法、评论和实验数据。**
+
+加入现有团队需要管理员私下提供有效邀请码。管理员在左下角头像菜单 → **团队管理** → **生成成员邀请码** 操作；朋友在登录页面使用邀请码，设置自己的用户名、密码和昵称。邀请码仅可使用一次、24 小时失效，当前团队最多三个人类账号。用户名用于登录，昵称用于团队展示。
+
+每位成员使用自己的账号。入组后能看到团队之前和之后的记录；别人更新后点击右上角 **刷新**。项目和想法从录入起对整个团队可见。团队管理权限不代表可以编辑其他成员主导的项目、想法或实验。
+
+发布包不包含邀请码、密码、登录会话或配对后的 Agent 凭据。不要将这些私人内容放进 GitHub、Issue 或聊天截图。
+
+## 当前功能
+
+- 项目、标签、优先级；查看成员资料与主页。
+- 独立想法或关联项目的想法，筛选未关联想法。
+- 项目下的实验，记录进度、优先级、结果与证据。
+- 参与他人的想法或实验、创建自己的分支、提交采纳请求；原主导者决定是否合并，保留来源。
+- 评论、赞同、消息、活动记录和项目经验报告。
+- Codex 通过专用 Skill 和独立 Agent 读写，支持补记可访问的遗漏进展与原请求重试。
+
+## 让朋友的 Codex 接入
+
+先完成自己的 Graybox 账号登录。然后把以下文字交给 Codex，并替换成自己电脑的实际绝对路径：
+
+> 阅读 `C:/工具/Graybox/README.md`，按其中步骤帮我接入 Graybox。我实际工作的项目目录是 `D:/我的项目`。先检查 Node.js 24 和客户端路径，将 Skill 安装到这个项目的 `.agents/skills/graybox`，保留已有文件；不要修改全局 Codex 配置，不要索取或输出密码、Token。发起我自己的 Agent 配对，让我到 Graybox 的头像菜单中批准；完成后读取真实项目列表，让我选择已有项目或明确新建项目，再绑定实际目录。先做只读核对；业务写入等我说“写入 Graybox”再进行。
+
+下载包包含 `runtime`、`skills` 和配置示例，无需安装 pnpm 或 node_modules。以下是 Codex 应执行的步骤；**占位路径必须先替换**。
+
+### 1. 安装项目级 Skill
+
+检查 `node --version` 为 v24。将整个 `skills/graybox` 复制到实际项目的 `.agents/skills/graybox`；已有不同版本先比较，保留用户自己的修改。复制后重开该项目的 Codex 会话。
+
+只从源码下载时，先在 Graybox 源码目录运行 `pnpm install --frozen-lockfile` 和 `node scripts/build-client.mjs`，客户端生成在 `.local/client-release`。普通用户直接下载 Releases，无需这一步。
+
+### 2. 为自己的 Codex 配对
+
+PowerShell 示例（变量只对当前进程有效，新终端需要重新设置）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1
+$GrayboxDir = 'C:/工具/Graybox'
+$GrayboxProject = 'D:/我的项目'
+$GrayboxPrivate = Join-Path $env:USERPROFILE 'Graybox-private/client.json'
+node "$GrayboxDir/runtime/client.mjs" auth pair-start --endpoint https://api.qingsuworks.top:8443 --name '我的Codex' --config "$GrayboxPrivate"
 ```
 
-启动器检查已有独立 PostgreSQL 集群，核对持久 environment UUID，按需启动回环 API，再打开已构建的桌面。`-ServicesOnly` 仅启动后台，供 CLI/MCP 使用。`scripts/stop-local.ps1` 只停止该启动器创建且 PID/启动时间/可执行文件匹配的 API；数据库留存，不删数据。
+在已登录自己的 Graybox 中点击左下角头像 → **团队管理** → **Codex 配对**，输入命令返回的配对码并批准。配对码约十分钟有效。当前界面授权该 Agent 访问此账号可访问的全部项目，服务端仍检查实际业务编辑权限。
 
-已配置的隔离数据库位于仓库外 `../work/postgres/data`，端口 **55439**，使用已安装的 PostgreSQL 18 二进制。没有修改原有系统数据库服务。API 仅监听 `127.0.0.1:4318`，网页开发服务为 `127.0.0.1:4317`。
+```powershell
+node "$GrayboxDir/runtime/client.mjs" auth pair-complete --config "$GrayboxPrivate"
+$env:GRAYBOX_CLIENT_CONFIG = $GrayboxPrivate
+node "$GrayboxDir/runtime/client.mjs" auth status
+node "$GrayboxDir/runtime/list-projects.mjs"
+```
 
-本地桌面固定使用现有凭据文件中的第一个人类账号，侧栏只显示自己的头像与昵称；点击头像可更换或恢复默认头像。保留的三个人类账号与独立 Agent 凭据用于隔离测试，不提供日常身份切换入口。`.env`、`.local/credentials.json`、个人客户端映射不进 Git。不要将这些文件放进分享包。此本机开发版没有云同步、离线写入队列或远程访问入口。
+返回 `pending` 时先批准再完成领取。配置和 Agent 凭据保存在仓库外的个人目录，不能转发朋友。普通 CLI 命令依赖 `GRAYBOX_CLIENT_CONFIG`，不是 `--config`；Codex 每次新建命令进程都应设置这个环境变量。配对失效或被撤销后重新配对，不能复制他人的凭据。
 
-## 可用流程
+### 3. 选择并绑定真实项目
 
-1. 建立项目，在项目下按实验方向记录一次尝试。
-2. 保存目标、总结、修改说明；追加实际执行的技术证据。
-3. 提交待验收，在首页查看固定提交快照。继续实验后可再提交；旧快照仍保存。
-4. 在活动中查看身份、变更前后内容，预览并执行符合条件的批次撤销。
+`list-projects.mjs` 只读返回实际环境、团队和项目 UUID 与名称。由用户选择目标，不能猜测 UUID，也不能绑定任意同名项目。
 
-撤销是服务端原子补偿：有后续或交错写入、外部依赖、超期、权限变化等情况会拒绝。创建撤销为软删除；审计和原始证据保留。补偿批次暂不支持自动再撤销。技术证据是提交者报告，不能替代人类评分或真实游戏测试；M1 尚未提供人工评分界面。
+将选择的三个真实 UUID 写入临时 `binding.json`：
 
-CLI、工程绑定和 MCP 使用说明见 `docs/architecture/clients.md`；API 契约见 `docs/architecture/api-contract.md`。本地服务与桌面独立，关闭桌面后代理仍能访问 API。
+```json
+{"version":1,"environment_id":"实际环境UUID","workspace_id":"实际团队UUID","project_id":"实际项目UUID"}
+```
 
-## 开发和验证
+```powershell
+node "$GrayboxDir/runtime/client.mjs" project bind --cwd "$GrayboxProject" --input 'C:/临时/binding.json'
+node "$GrayboxDir/runtime/client.mjs" context --cwd "$GrayboxProject"
+node "$GrayboxDir/runtime/client.mjs" sync status --cwd "$GrayboxProject"
+```
 
-依赖版本由 `pnpm-lock.yaml` 与 `Cargo.lock` 固定。本次使用 Node 24、pnpm 11、PostgreSQL 18、Rust stable/MSVC、WebView2。
+目录必须已存在。没有合适项目时，可在 Graybox 新建项目后重读列表；或明确授权 Codex 按共享命令格式新建。已有不同绑定先说明差异，不能擅自 `--replace`。绑定只保存 UUID，不保存端点或凭据。
+
+### 4. 日常写入和补记
+
+说“**写入 Graybox**”“**同步这次结果**”或“**补写之前进展**”即可。Skill 读取目标和上次已核对的同步记录，将之后可访问的工作按格式写入，再读取服务器活动核对。忘记一两次可以补记；无法访问的旧对话不能凭空补全，会明确说明缺口。
+
+写入使用 `sync prepare → sync execute` 保存稳定请求键和回执，失败时重试同一操作，不重复创建。技术测试、实际运行和人工验收分别记录；Codex 不代替人类赞同或宣布验收通过。编辑和采纳遵循项目或想法/实验的实际主导权限。
+
+首次接入默认只读。用户明确请求写入后才记录业务内容。完整规则见 [Skill](skills/graybox/SKILL.md)、[同步与协作格式](skills/graybox/references/sync.md)、[经验报告格式](skills/graybox/references/project-retrospective.md)。
+
+### 5. MCP（可选）
+
+CLI 已能完成上述流程。需要 MCP 时，将 `config.toml.example` 的 Node、客户端和个人配置路径换成实际绝对路径，合并到用户选择的项目 `.codex/config.toml`；保留已有配置，不能擅自改全局设置。MCP 参数为 `runtime/client.mjs`、`mcp`、`serve`，每次工具调用仍传入实际绝对 `cwd`。
+
+## 图片、视频和网页演示
+
+项目、想法、实验的详情里都有 **附件与链接**。可上传 PNG/JPEG/WebP（10 MB 内）、MP4/WebM（50 MB 内）和单个自包含 HTML（5 MB 内），填写说明后，团队成员可以直接查看。大项目填写 GitHub 地址；附件不会随公开源码仓库一起公开。
+
+HTML 的 CSS、JavaScript、图片等资源需内联；不支持 ZIP、外部依赖、网络请求或后端。演示在隔离窗口中运行。团队附件默认总额度为 1 GB，由部署者调整。
+
+也可以对 Codex 说“把这张截图和这段视频写入 Graybox 的这个实验”。它使用自己的配对权限，核对目标，只上传指定文件，并在成功后读取服务器确认。失败重试复用原操作，不重复上传。CLI/MCP 的格式和恢复规则见 [附件说明](skills/graybox/references/attachments.md)。
+
+## 登录与故障
+
+- 关闭桌面窗口后程序留在右下角托盘，从托盘打开工作台；彻底退出用托盘菜单。显式退出登录、账号停用或凭据撤销后需要重新登录。
+- 保存提示“结果尚未确认”表示响应或核对失败，不表示确定没有保存；用核对/重试入口，避免重复录入。
+- 看不到朋友的新内容先点 **刷新**；失败则检查网络和服务器连接。
+- 浏览器与桌面、不同电脑的登录状态分别保存。Agent 配对不能代替人类账号登录。
+- 客户端未做代码签名，朋友的真实 Windows 设备兼容性仍需验证；遇到系统提示时先核对发布文件与校验值。
+
+## 开发者
+
+技术栈：Tauri 2 + React、Fastify、PostgreSQL、共享 CLI/MCP；当前云端使用独立自托管服务。普通团队成员不需要部署服务器。部署说明见 [ops/cloud](ops/cloud/README.md)。
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm run typecheck
-pnpm test
+pnpm exec vitest run tests/unit
 pnpm run build:web
-pnpm run dev:web
+node scripts/build-client.mjs
 ```
 
-集成测试会重置 **graybox_test** 的 Graybox schema；只使用专用测试库，禁止指向开发/正式库。Vitest 文件间串行，避免两个集成套件互相重置。不要同时从两个终端运行数据库集成测试。
+集成测试会重置专用 `graybox_test` 的 Graybox schema，禁止指向正式库；不同时运行多个数据库测试。配置模板为 `.env.example`，真实 `.env` 和 `.local` 不提交。早期架构文档记录历史设计，当前行为以代码、本文和对应验证说明为准。
 
-本机 Rust 安装位于 `../work/toolchains`，没有修改全局 PATH：
-
-```powershell
-$env:RUSTUP_HOME = (Resolve-Path ../work/toolchains/rustup).Path
-$env:CARGO_HOME = (Resolve-Path ../work/toolchains/cargo).Path
-$env:PATH = "$env:CARGO_HOME/bin;$env:PATH"
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-# 下项需要已运行的真实本地 API：
-$env:GRAYBOX_CREDENTIALS_PATH = (Resolve-Path .local/credentials.json).Path
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -- --include-ignored
-pnpm run build:web
-pnpm exec tauri build --debug --no-bundle --config apps/desktop/src-tauri/tauri.conf.json
-```
-
-桌面测试分层：纯展示/重试规则、真实 API 原生桥接、相同 React 界面的浏览器操作、原生进程启动。浏览器验证不等于 WebView2 的逐项点击验收；后续云认证也需要单独验收。
-
-## 在另一台开发电脑准备数据库
-
-源码包不包含数据库、密码、Node 依赖、Rust 工具链或 WebView2。当前一键启动器是本机开发入口，不能当作可搬运安装包。
-
-先准备一个独立 PostgreSQL 18 集群：回环监听、scram-sha-256 密码认证。创建具有迁移权限的 `graybox_admin`、无超级用户/建库/建角色权限的 `graybox_runtime`，以及由管理员拥有的 `graybox_dev` / `graybox_test`。为两账号生成不同随机密码；不要使用示例占位密码。
-
-复制 `.env.example` 为 `.env`，填入该专用集群连接串，然后运行：
-
-```powershell
-pnpm exec tsx packages/db/src/migrate.ts
-pnpm exec tsx packages/db/src/seed.ts
-pnpm exec tsx scripts/prepare-local-runtime.ts
-pnpm run api
-```
-
-迁移按固定 runtime 角色名授权。种子脚本重跑保留已有记录和凭据，不重置数据库。启动脚本默认本机 PostgreSQL 路径和隔离数据目录；迁移到其他路径需要明确修改该配置。备份至少包含数据库一致性备份与单独安全保存的本地凭据；目前没有完成正式备份恢复演练。
-
-## 后续边界
-
-本次用户明确选择先完成本地开发验证。已用真实 Codex CLI 临时加载本地 MCP，完成查询上下文、创建实验、追加证据、提交快照与审计核验，没有修改全局 Codex 设置。真实 Supabase 登录/Agent 配对、邀请、三人跨机器协作仍需后续联调；媒体、人工评价、Knowledge/中文搜索、自动恢复与正式安装升级属于后续里程碑。不能把本机演示模式部署到公网。
-
-
-## 项目经验库客户端与 Skill
-
-`node scripts/build-client.mjs` 生成 `.local/client-release`，仅包含独立 CLI/MCP bundle、专用 Skill、中文安装/配对/项目绑定说明和 MCP 配置示例，无个人凭据与 node_modules。需要 Node.js 24；分享时压缩整个生成目录。入口：`node runtime/client.mjs help`；MCP：`node runtime/client.mjs mcp serve`。每位成员使用自己的人类账号批准独立 Agent 配对，外部个人配置使用绝对路径，并为实际项目绑定 UUID。
-
-CLI 新增 `retrospective create|list`、`comment create|list`、`tag list [--q TEXT]`；全部显式 `--cwd ABS`。写入使用 exact shared command envelope，当前项目 `expected_revision` 和稳定 UUID 键，详见 [复盘格式](skills/graybox/references/project-retrospective.md) 与 [中文安装说明](skills/graybox/references/setup.md)。MCP 暴露对应五个工具。报告与评论不可编辑或撤销，通过新报告/纠正评论补充。
-
-## 项目权限与团队账号管理（0.3.0）
-
-账号固定，角色随项目变化：项目创建者是该项目的 owner，其他团队账号是 member。项目详情显示项目 owner 与当前账号的实际项目角色；同一个人可以在自己的项目中是 owner，在别人的项目中是 member。owner 可编辑项目、记录实验/证据、提交验收和添加经验报告；所有团队成员可阅读与评论。Agent 继承其人类账号的项目权限，并同时受凭据项目范围约束。
-
-团队管理只负责邀请、停用等账号管理，不授予编辑其他人项目的能力。历史创建者未知的项目保持未分配、只读，不自动归属团队管理账号。当前不提供转移项目 owner 的功能。每种领域写入与撤销预览/执行都检查当前项目归属；已成功的原始幂等收据仍可按原请求重试，读取项目时重新计算当前角色。旧活动、创建者和历史内容保持原样。
-
-## 成员主页、赞同与消息（0.3.0）
-
-首页与项目空间显示团队成员头像及昵称。点击查看公开资料卡，再点“进入主页”查看该成员创建的想法与主导项目；从主页可进入实际项目详情。资料不显示用户名、凭据或团队管理权限。
-
-人类成员可以赞同其他人的项目/想法，点击“已赞同”可取消；每人只计一次。自己的项目无需赞同，Agent 不能代替人表达赞同。第一次赞同与他人的评论发送站内消息给项目 owner，Agent 评论保留人类与 Agent 归属。取消后保留历史消息，重新赞同不重复提醒；自己的评论不提醒自己。
-
-顶栏“消息”入口在窄屏也可访问，显示完整未读数。消息箱支持逐条已读、将当前显示消息标为已读、加载更早消息与查看项目。只属于当前人类账号；Agent 无法读取。被移入回收状态的项目保留历史消息，明确标示项目不可访问。新到消息不会被当前已读操作误标。每 15 秒及窗口聚焦刷新，失败时可重新读取；不确定写入使用原目标重试并保留导航保护。
-
-升级须通过 `migrate(pool)` / `packages/db/src/migrate.ts` 或审核过的云升级器应用 `001..005`；`005_team_social.sql` 为新增空表与索引/权限，不改写既有账号、项目或讨论，也不为旧互动生成消息。`build-cloud.mjs`、初始安装器、通用迁移器及升级器排序检查包含该迁移。应用与 CLI/MCP/Skill 发布元数据为 0.3.0。
-
-自动化验证涵盖真实隔离 PostgreSQL 人类/Agent 权限、事务回滚、持久去重/已读、云端真实测试账号与分页，以及 UI 展示/重试/桥接规则。真实本地/云端浏览器点击、原生交互与朋友设备验收按交付记录分别确认；构建通过本身不代表这些验收完成。
+已完成独立 Codex 对话中的真实 Skill/Agent 写入、补记、稳定请求重试及 MCP 只读联调。详见 [验证记录](docs/skill-agent-live-check.md) 与 [手动刷新](docs/manual-refresh.md)。朋友设备安装和不同人类账号的完整分支合并仍需实际验收；构建通过不等于这些验收已完成。

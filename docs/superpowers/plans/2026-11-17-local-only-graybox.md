@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 运行时不访问网络，不读取 `GRAYBOX_SERVER_URL`，不启动 PostgreSQL。
-- 数据保存在 `%LOCALAPPDATA%/Graybox/`，附件和头像必须随迁移包处理。
+- 数据保存在 `D:\\Graybox/`，附件和头像必须随迁移包处理；可用 `GRAYBOX_DATA_ROOT` 指定其他盘符。
 - 导入前校验清单和 SHA-256；失败或冲突不得破坏当前数据库。
 - 保留现有项目、想法、实验、标签、历史、来源、分支和附件关系。
 - 不删除云端数据，不把密码、令牌或会话写入迁移包。
@@ -27,7 +27,7 @@
 - Modify: `package.json`
 - Test: `tests/unit/local-db.test.ts`
 
-- [ ] 添加 SQLite 驱动和严格的数据库目录初始化函数，默认目录为 `%LOCALAPPDATA%/Graybox`。
+- [ ] 添加 SQLite 驱动和严格的数据库目录初始化函数，Windows 默认目录为 `D:\\Graybox`。
 - [ ] 将当前项目、想法、实验、标签、评论、活动、附件和头像关系映射到 SQLite 表，启用 `foreign_keys`、WAL 和事务。
 - [ ] 提供 `openDatabase(root)`, `migrateDatabase(db)`, `backupDatabase(db,target)` 和基础查询接口。
 - [ ] 测试首次创建、重复迁移、事务回滚、外键约束和数据库备份可读。

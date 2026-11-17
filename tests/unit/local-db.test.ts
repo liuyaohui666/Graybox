@@ -2,12 +2,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openLocalDatabase, localDataStats, backupDatabase } from '../../packages/local-db/src/index.ts';
+import { openLocalDatabase, localDataStats, backupDatabase, defaultDataRoot } from '../../packages/local-db/src/index.ts';
 
 const roots:string[]=[];
 afterEach(async()=>{for(const root of roots.splice(0)) await rm(root,{recursive:true,force:true});});
 
 describe('local SQLite store',()=>{
+  it('defaults Windows data to D drive and accepts an explicit override',()=>{
+    expect(defaultDataRoot({})).toBe(process.platform==='win32'?'D:\\Graybox':defaultDataRoot({HOME:'/tmp'}));
+    expect(defaultDataRoot({GRAYBOX_DATA_ROOT:'D:/Graybox-custom'})).toContain('Graybox-custom');
+  });
   it('initializes a portable database and enables foreign keys',async()=>{
     const root=await mkdtemp(join(tmpdir(),'graybox-local-'));roots.push(root);
     const db=await openLocalDatabase(root);

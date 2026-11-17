@@ -4,11 +4,15 @@ import { DatabaseSync, backup } from 'node:sqlite';
 
 export const LOCAL_DATA_DIR = 'Graybox';
 export const DATABASE_FILE = 'graybox.sqlite';
+export const WINDOWS_DATA_ROOT = 'D:\\Graybox';
 
 export type LocalDatabase = DatabaseSync;
 
 export function defaultDataRoot(env:NodeJS.ProcessEnv=process.env):string {
-  const base=env.LOCALAPPDATA||env.APPDATA||env.HOME||env.USERPROFILE;
+  const configured=env.GRAYBOX_DATA_ROOT?.trim();
+  if(configured) return resolve(configured);
+  if(process.platform==='win32') return WINDOWS_DATA_ROOT;
+  const base=env.HOME||env.USERPROFILE;
   if(!base) throw new Error('无法确定 Graybox 本地数据目录。');
   return resolve(base,LOCAL_DATA_DIR);
 }
