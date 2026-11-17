@@ -74,13 +74,14 @@ fn session_snapshot()->Result<SessionSnapshot,String> {
 }
 fn cloud_endpoint()->Result<Option<String>,String> {Ok(session_snapshot()?.endpoint)}
 #[tauri::command] fn connection_info()->Result<Value,String> {
+ if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1") { return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318","profile":{"id":"local-user","name":"本地用户","role":"owner"}})); }
  let snapshot=session_snapshot()?;
  let endpoint=snapshot.endpoint;
  if endpoint.is_none() && std::env::var("GRAYBOX_CREDENTIALS_PATH").is_ok() { credentials()?; return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318"})); }
  Ok(json!({"mode":"cloud","endpoint":endpoint.unwrap_or_default(),"profile":snapshot.profile}))
 }
 #[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; session_store::clear()?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;} connection_info()}
-#[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
+#[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1"){return Ok(vec![Profile{id:"local-user".into(),name:"本地用户".into(),role:"owner".into()}]);}if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
 async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:Option<String>)->Result<Value,String> {
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(30)).build().map_err(|_|"无法创建连接。")?;
  let url=format!("{}{}",endpoint,path);
