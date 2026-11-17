@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promi
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { backupDatabase, openLocalDatabase, assertDatabaseFile } from '../../local-db/src/index.ts';
+import { backupDatabase, openLocalDatabase, assertDatabaseFile, localDataStats } from '../../local-db/src/index.ts';
 
 const execFileAsync=promisify(execFile);
 const FORMAT_VERSION=1;
@@ -17,7 +17,7 @@ export async function exportArchive(dataRoot:string,target:string):Promise<Archi
   const root=resolve(dataRoot),destination=resolve(target),stage=resolve(dirname(destination),`.graybox-export-${Date.now()}`);await mkdir(stage,{recursive:true});
   const db=join(root,'graybox.sqlite');await assertDatabaseFile(db);const localDb=await openLocalDatabase(root);try{await backupDatabase(localDb,join(stage,'graybox.sqlite'));}finally{localDb.close();}
   for(const dir of ['attachments','avatars']){const source=join(root,dir);try{await stat(source);await cp(source,join(stage,dir),{recursive:true});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
-  const manifest={format_version:FORMAT_VERSION,created_at:new Date().toISOString(),database:{...(await digest(join(stage,'graybox.sqlite'))),path:'graybox.sqlite'},files:[] as ManifestFile[],stats:{}} as ArchiveManifest;
+  const manifest={format_version:FORMAT_VERSION,created_at:new Date().toISOString(),database:{...(await digest(join(stage,'graybox.sqlite'))),path:'graybox.sqlite'},files:[] as ManifestFile[],stats:await localDataStats(root)} as ArchiveManifest;
   for(const file of await filesUnder(stage,stage))if(file.path!=='graybox.sqlite')manifest.files.push(file);
   await writeFile(join(stage,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');await mkdir(dirname(destination),{recursive:true});
   await execFileAsync(process.platform==='win32'?'tar.exe':'tar',['-a','-c','-f',destination,'-C',stage,'.']);await rm(stage,{recursive:true,force:true});return manifest;

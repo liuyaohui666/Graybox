@@ -16,7 +16,7 @@ describe('local SQLite store',()=>{
     const root=await mkdtemp(join(tmpdir(),'graybox-local-'));roots.push(root);
     const db=await openLocalDatabase(root);
     expect((db.prepare('PRAGMA foreign_keys').get() as {foreign_keys:number}).foreign_keys).toBe(1);
-    expect(await localDataStats(root)).toMatchObject({projects:0,ideas:0,experiments:0,tags:0});
+    expect(await localDataStats(root)).toMatchObject({projects:0,ideas:0,experiments:0,tags:0,learning_directions:0,learning_branches:0,learning_knowledge:0});
     db.close();
   });
   it('keeps data after reopening and can create a backup',async()=>{

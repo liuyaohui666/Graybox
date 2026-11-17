@@ -35,6 +35,9 @@ export function migrateDatabase(db:LocalDatabase):void {
     CREATE TABLE IF NOT EXISTS attachments(id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS avatars(id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS activities(id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS learning_directions(id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS learning_branches(id TEXT PRIMARY KEY, direction_id TEXT NOT NULL REFERENCES learning_directions(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS learning_knowledge(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL REFERENCES learning_branches(id) ON DELETE CASCADE, name TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', review TEXT, tags TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   `);
 }
 
@@ -50,7 +53,7 @@ export async function localDataStats(dataRoot=defaultDataRoot()) {
   try {
     const count=(table:string)=>Number((db.prepare(`SELECT count(*) AS count FROM ${table}`).get() as {count:number}).count);
     const entries=await readdir(resolve(dataRoot),{withFileTypes:true});
-    return {projects:count('projects'),ideas:count('ideas'),experiments:count('experiments'),tags:count('tags'),attachments:count('attachments'),avatars:count('avatars'),activities:count('activities'),files:entries.length};
+    return {projects:count('projects'),ideas:count('ideas'),experiments:count('experiments'),tags:count('tags'),attachments:count('attachments'),avatars:count('avatars'),activities:count('activities'),learning_directions:count('learning_directions'),learning_branches:count('learning_branches'),learning_knowledge:count('learning_knowledge'),files:entries.length};
   } finally {db.close();}
 }
 
