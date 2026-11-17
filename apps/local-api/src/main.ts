@@ -76,6 +76,8 @@ app.post('/v1/attachments/upload', async (req: any, reply) => {
     const metadata = JSON.parse(Buffer.from(encoded + '='.repeat((4 - encoded.length % 4) % 4), 'base64').toString('utf8')) as any;
     const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
     if (!metadata.entity_type || !metadata.entity_id || !metadata.name || !metadata.kind || bytes.length === 0 || bytes.length > 50 * 1024 * 1024) throw new Error('附件为空或超限。');
+    const previous = (db.prepare('SELECT * FROM attachments WHERE entity_type=? AND entity_id=?').all(metadata.entity_type, metadata.entity_id) as any[]).map(row => json(row)).find(item => item.idempotency_key === metadata.idempotency_key);
+    if (previous) return wrap(previous);
     const id = randomUUID();
     const relativePath = `attachments/${id}`;
     await mkdir(join(root, 'attachments'), { recursive: true });
@@ -91,6 +93,8 @@ app.post('/v1/attachments/link', async (req: any, reply) => {
     const body = req.body as any;
     const url = new URL(String(body?.url || ''));
     if (url.protocol !== 'https:') throw new Error('链接必须使用 HTTPS。');
+    const previous = (db.prepare('SELECT * FROM attachments WHERE entity_type=? AND entity_id=?').all(body.entity_type, body.entity_id) as any[]).map(row => json(row)).find(item => item.idempotency_key === body.idempotency_key);
+    if (previous) return wrap(previous);
     const id = randomUUID();
     const record = { id, entity_type: body.entity_type, entity_id: body.entity_id, name: body.name || url.hostname, caption: body.caption || '', kind: body.kind || 'repository', mime_type: null, byte_size: 0, sha256: null, url: url.href, uploader_id: 'local-user', created_at: now(), idempotency_key: body.idempotency_key };
     db.prepare('INSERT INTO attachments(id,entity_type,entity_id,relative_path,sha256,data) VALUES(?,?,?,?,?,?)').run(id, record.entity_type, record.entity_id, '', '', JSON.stringify(record));
