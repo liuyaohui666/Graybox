@@ -9,7 +9,7 @@ description: Use when a user says 写入Graybox、同步这次结果、补写之
 
 当用户没有明确要求团队云端操作时，使用本地个人版。数据目录固定为 `D:\\Graybox`，不登录、不联网、不读取团队项目。用户说“写入 Graybox”“同步这次结果”“补写之前进展”时，先读取本次工作目录中的文件、Git 提交、测试输出和已有记录，再把能够核对的内容写入本地 SQLite。优先使用仓库中的 `node scripts/local-graybox.mjs list` 查看现有记录，写入可用 `record --input <绝对 JSON 路径>`，更新可用 `update --type project|idea|experiment --input <绝对 JSON 路径>`。输入中的 `type` 必须明确，项目内实验必须有 `project_id`，独立想法使用 `project_id:null`。不要把推测、未运行的计划或没有证据的结果写入“已完成”。
 
-本地记录按五类整理。项目记录目标、说明、状态、优先级和标签，想法可以独立也可以关联项目，实验必须关联项目并记录目标、进度、优先级、结果与可复用经验，学习记录使用桌面端“学习”模块的方向、分支和知识点，其他材料放在附件。用户要求截图、视频、网页演示或仓库链接时，在桌面端对应记录的“附件与链接”中添加并重新读取核对。完成一次本地写入后，报告写入的记录 ID 和证据来源。
+本地记录按五类整理。项目记录目标、说明、状态和标签，想法可以独立也可以关联项目，实验必须关联项目并记录目标、进度、结果与可复用经验，学习记录使用桌面端“学习”模块的方向、分支和知识点，其他材料放在附件。用户要求截图、视频、网页演示或仓库链接时，在桌面端对应记录的“附件与链接”中添加并重新读取核对。完成一次本地写入后，报告写入的记录 ID 和证据来源。
 
 本地版迁移从左下角头像菜单使用“导出数据”“校验迁移包”“导入数据”。迁移包扩展名为 `.graybox`，不要手动复制 SQLite 的 WAL 文件。导入后重启 Graybox，再刷新列表核对记录。
 
@@ -33,7 +33,7 @@ description: Use when a user says 写入Graybox、同步这次结果、补写之
 
 项目主导者管理项目元数据；想法与实验有各自实际主导者。团队管理角色不等于业务编辑权限，项目主导者也不自动替代实体主导者。读取当前 `owner_id` / `can_edit` / `project_role`；服务器重新校验身份与 Agent 范围。团队成员可参与、讨论、另开自己的分支；修改原实体和采纳合并按实体主导权限。通过 `collaboration_get` 阅读来源、参与和合并请求。对他人路线继续工作时，按用户意图加入或创建分支，再修改自己的路线；不要冒充原作者。合并保留分支及来源版本，只采纳明确选定字段。Agent 不替人类赞同或作验收结论。
 
-只记录观察到的证据：真实命令、退出码、提交、测量或文件变化。区分 passed/failed/not_run/inconclusive 和 agent_reported/local_collector/ci。构建成功不证明运行、画面、声音、输入或用户验收；计划不算完成。实验 `progress`、`priority`、`outcome` 与人工 review 分开，不能自动替用户接受。`review_submit` 创建不可变待审快照并关闭批次。
+只记录观察到的证据：真实命令、退出码、提交、测量或文件变化。区分 passed/failed/not_run/inconclusive 和 agent_reported/local_collector/ci。构建成功不证明运行、画面、声音、输入或用户验收；计划不算完成。实验 `progress`、`outcome` 与人工 review 分开，不能自动替用户接受。`review_submit` 创建不可变待审快照并关闭批次。
 
 已实现的 MCP：`context_resolve`、`entity_get`、`entity_list`、`entity_activate`、`collaboration_get`、`command_execute`、`sync_status`、`sync_prepare`、`sync_execute`，以及旧的项目/实验/证据/复盘/评论/活动/撤销工具。每项都要求 `cwd`。完整共享命令和 CLI 用法见 [sync.md](references/sync.md)；初始配对、配置和旧命令见 [setup.md](references/setup.md)。配对需要用户在界面授权，不能持久保存人类 session。
 

@@ -31,7 +31,7 @@ test('fixed human accounts have project-dependent owner/member regardless of tea
  expect((await cmd(a.token,'project_update',{id:pa.id,creator_id:b.id},2)).status).toBe(400);
 });
 
-test.each(['project_update','retrospective_create','experiment_create','experiment_update','evidence_append','review_submit'])('team manager and their Agent cannot bypass %s on another human project',async(type)=>{
+test.each(['project_update','retrospective_create','experiment_update','evidence_append','review_submit'])('team manager and their Agent cannot bypass %s on another human project',async(type)=>{
  const owner=f.tokens.member_agent!,p=await project(owner),e=(await cmd(owner,'experiment_create',{project_id:p.id,series_name:'S',name:'E',goal:'G'})).data;
  const payload=type==='project_update'?{id:p.id,name:'No'}:type==='retrospective_create'?report(p.id):type==='experiment_create'?{project_id:p.id,series_name:'No',name:'No',goal:'No'}:type==='experiment_update'?{id:e.id,summary:'No'}:type==='evidence_append'?{experiment_id:e.id,type:'test',source_kind:'agent_reported',result:'not_run',details:{command:'not executed',summary:'No'}}:{experiment_id:e.id};
  const counts=(await admin.query('SELECT (SELECT count(*) FROM graybox.activities)::int activities,(SELECT count(*) FROM graybox.idempotency)::int keys,(SELECT count(*) FROM graybox.batches)::int batches')).rows[0];
@@ -79,10 +79,12 @@ test('changing team-management capability neither grants nor revokes project own
  expect((await req(b.token,'GET',`/v1/projects/${p.id}`)).data.project_role).toBe('member');
 });
 
-test('unassigned project denies every legacy domain write to former creator and team manager',async()=>{
+test('unassigned project keeps metadata read-only while experiments retain their actual leader',async()=>{
  const owner=f.tokens.member_agent!,p=await project(owner),e=(await cmd(owner,'experiment_create',{project_id:p.id,series_name:'S',name:'E',goal:'G'})).data;
  await admin.query('UPDATE graybox.projects SET creator_id=NULL WHERE id=$1',[p.id]);
- const attempts:[string,object,number?][]=[['project_update',{id:p.id,name:'No'},1],['retrospective_create',report(p.id),1],['experiment_create',{project_id:p.id,series_name:'No',name:'No',goal:'No'}],['experiment_update',{id:e.id,summary:'No'},1],['evidence_append',{experiment_id:e.id,type:'test',source_kind:'agent_reported',result:'not_run',details:{command:'demo',summary:'not run'}},1],['review_submit',{experiment_id:e.id},1]];
+ const attempts:[string,object,number?][]=[['project_update',{id:p.id,name:'No'},1],['retrospective_create',report(p.id),1]];
  for(const token of [owner,f.tokens.owner_agent!])for(const [type,payload,revision] of attempts)expect((await cmd(token,type,payload,revision)).status).toBe(403);
- expect((await req(owner,'GET',`/v1/experiments/${e.id}`)).data.revision).toBe(1);
+ expect((await cmd(f.tokens.owner_agent!,'experiment_update',{id:e.id,summary:'Cannot impersonate'},1)).status).toBe(403);
+ expect((await cmd(owner,'experiment_update',{id:e.id,summary:'Leader continues'},1)).status).toBe(200);
+ expect((await req(owner,'GET',`/v1/experiments/${e.id}`)).data).toMatchObject({revision:2,owner_id:f.humans[1]!.id,summary:'Leader continues'});
 });

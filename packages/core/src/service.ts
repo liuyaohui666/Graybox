@@ -2,8 +2,9 @@ import { createHash,createHmac,randomBytes,randomUUID,timingSafeEqual } from 'no
 import type { Pool,PoolClient } from 'pg';
 import {z} from 'zod';
 import {agreementState,inboxPage,notifyOwner} from './social.ts';
+import {experimentOwner,presentExperiment,idea} from './collaboration.ts';
 import {validAvatar} from './avatar.ts';
-import { commandSchema,undoSchema,type Principal,type Entity } from '../../contracts/src/index.ts';
+import { legacyCommandSchema,collaborationCommandSchema,undoSchema,type Principal,type Entity,type CollaborationCommand } from '../../contracts/src/index.ts';
 
 export class DomainError extends Error { constructor(public code:string,message:string,public status=409) {super(message);} }
 const fail=(code:string,message:string,status=409):never=> {throw new DomainError(code,message,status);};
@@ -102,8 +103,16 @@ export class Service {
       // Cached data remains private even though the original command already committed.
       // Authorization comes from the stored server response/activity, never the new payload.
       const response=prior.response as Record<string,unknown>;
+      // Cached collaboration snapshots still require access to their live endpoints.
+      if((response.entity_type==='idea'||response.entity_type==='experiment') && typeof response.entity_id==='string') {
+        await this.collaborationEntity(c,p,response.entity_type,response.entity_id);
+        if(typeof response.target_id==='string')await this.collaborationEntity(c,p,response.entity_type,response.target_id);
+      }
+      if(typeof response.workspace_id==='string' && 'project_id' in response && typeof response.id==='string' && 'body' in response)await idea(c,p,response.id,fail);
+
       if(typeof response.project_id==='string') this.scope(p,response.project_id);
-      if(typeof response.workspace_id==='string' && typeof response.id==='string') this.scope(p,response.id);
+      if('project_id' in response && response.project_id===null && p.project_ids!==null)fail('FORBIDDEN','Unlinked entity outside credential scope',403);
+      if(!('project_id' in response) && typeof response.workspace_id==='string' && typeof response.id==='string') this.scope(p,response.id);
       if(typeof response.batch_id==='string') {
         const projects=(await c.query('SELECT DISTINCT project_id FROM graybox.activities WHERE batch_id=$1',[response.batch_id])).rows;
         for(const row of projects) this.scope(p,row.project_id);
@@ -129,7 +138,134 @@ export class Service {
   async getExperiment(p:Principal,id:string) {
     p=await this.currentPrincipal(this.pool,p.id);
     const e=await this.entity(this.pool,'experiment',id,false,p);
-    const evidence=await this.children(this.pool,'evidence',id),submissions=await this.children(this.pool,'submissions',id);return {...e,evidence,submissions};
+    const evidence=await this.children(this.pool,'evidence',id),submissions=await this.children(this.pool,'submissions',id);return {...await this.presentExperiment(this.pool,p,e),evidence,submissions};
+  }
+  private presentExperiment=presentExperiment;
+  private async experimentEditable(c:PoolClient,p:Principal,e:Entity) {
+    if((await experimentOwner(c,e.id)).owner_id!==p.human_id && !(await c.query("SELECT id FROM graybox.collaboration_events WHERE entity_type='experiment' AND entity_id=$1 AND author_id=$2 AND kind='join' LIMIT 1",[e.id,p.human_id])).rowCount)fail('FORBIDDEN','Only experiment owner may edit',403);
+  }
+  async getIdea(p:Principal,id:string) {return this.transaction(p,(c,current)=>idea(c,current,id,fail));}
+  async attachmentTransaction<T>(p:Principal,type:'project'|'idea'|'experiment',id:string,write:boolean,fn:(c:PoolClient,current:Principal,target:Entity)=>Promise<T>) {
+    return this.transaction(p,async(c,current)=>{
+      const target=type==='project'?await this.entity(c,'project',id,false,current):await this.collaborationEntity(c,current,type,id);
+      if(write&&!target.can_edit&&!target.can_contribute)fail('FORBIDDEN','Target edit or contribute permission required',403);
+      return fn(c,current,target);
+    });
+  }
+  async ideas(p:Principal,query:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      const parsed=z.strictObject({project_id:z.uuid().optional(),unlinked:z.enum(['true','false']).optional()}).safeParse(query);
+      if(!parsed.success)fail('VALIDATION','Invalid idea query',400);
+      const rows=(await c.query('SELECT id FROM graybox.ideas WHERE ($1::uuid IS NULL OR project_id=$1) AND ($2::boolean=false OR project_id IS NULL) ORDER BY created_at,id',[parsed.data!.project_id??null,parsed.data!.unlinked==='true'])).rows;
+      const out=[];for(const row of rows){try{out.push(await idea(c,current,row.id,fail));}catch(e){if(!(e instanceof DomainError&&e.code==='NOT_FOUND'))throw e;}}return out;
+    });
+  }
+  private async collaborationEntity(c:PoolClient,p:Principal,type:'idea'|'experiment',id:string) {
+    return type==='idea'?idea(c,p,id,fail):this.presentExperiment(c,p,await this.entity(c,'experiment',id,true,p));
+  }
+  async collaboration(p:Principal,query:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      const parsed=z.strictObject({entity_type:z.enum(['idea','experiment']),entity_id:z.uuid()}).safeParse(query);
+      if(!parsed.success)return fail('VALIDATION','Entity required',400);
+      const t=parsed.data,e=await this.collaborationEntity(c,current,t.entity_type,t.entity_id);
+      const events=(await c.query('SELECT e.*,u.name AS author_name FROM graybox.collaboration_events e JOIN graybox.users u ON u.id=e.author_id WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at,id',[t.entity_type,t.entity_id])).rows;
+      const latest=new Map<string,any>();for(const event of events.filter(x=>x.kind==='agreement'))latest.set(event.author_id,event);
+      const requests=(await c.query('SELECT r.*,d.decision AS resolved_decision,d.selected_fields AS adopted_fields FROM graybox.merge_requests r LEFT JOIN graybox.merge_decisions d ON d.request_id=r.id WHERE r.entity_type=$1 AND (r.entity_id=$2 OR r.target_id=$2) ORDER BY r.created_at,r.id',[t.entity_type,t.entity_id])).rows;
+      const merge_requests=[];for(const r of requests){try{const target=await this.collaborationEntity(c,current,t.entity_type,r.target_id);const branch=await this.collaborationEntity(c,current,t.entity_type,r.entity_id);merge_requests.push({...r,project_id:target.project_id??null,target_project_id:target.project_id??null,source_project_id:branch.project_id??null,decision:r.resolved_decision??null,can_resolve:target.owner_id===current.human_id&&!r.resolved_decision,target_revision:target.revision});}catch(error){if(!(error instanceof DomainError&&error.code==='NOT_FOUND'))throw error;}}
+      return {comments:events.filter(x=>x.kind==='comment'||x.kind==='extension').map(x=>({...x,body:x.data.body})),participants:[...new Map(events.filter(x=>x.kind==='join').map(x=>[x.author_id,x])).values()],agreements:{count:[...latest.values()].filter(x=>x.data.agreed).length,agreed:latest.get(current.human_id)?.data.agreed??false},merge_requests};
+    });
+  }
+  async getMergeRequest(p:Principal,id:string) {
+    return this.transaction(p,async(c,current)=>{
+      const r=(await c.query('SELECT r.*,d.decision AS resolved_decision FROM graybox.merge_requests r LEFT JOIN graybox.merge_decisions d ON d.request_id=r.id WHERE r.id=$1',[id])).rows[0];
+      if(!r)return fail('NOT_FOUND','Merge request not found',404);
+      const target=await this.collaborationEntity(c,current,r.entity_type,r.target_id);const branch=await this.collaborationEntity(c,current,r.entity_type,r.entity_id);
+      const project=target.project_id?await this.entity(c,'project',target.project_id,false,current):null;
+      return {...r,project_id:target.project_id??null,target_project_id:target.project_id??null,source_project_id:branch.project_id??null,decision:r.resolved_decision??null,workspace_id:target.workspace_id??project?.workspace_id,can_resolve:target.owner_id===current.human_id&&!r.resolved_decision,target_revision:target.revision};
+    });
+  }
+  async collaborationNotifications(p:Principal,body?:unknown) {
+    return this.transaction(p,async(c,current)=>{
+      if(current.kind!=='human')fail('FORBIDDEN','Human inbox required',403);
+      if(body!==undefined){const parsed=z.strictObject({ids:z.array(z.uuid()).max(100)}).safeParse(body);if(!parsed.success)return fail('VALIDATION','Notification ids required',400);await c.query('UPDATE graybox.collaboration_notifications SET read_at=coalesce(read_at,now()) WHERE recipient_id=$1 AND id=ANY($2::uuid[]) AND ($3::uuid[] IS NULL OR project_id=ANY($3::uuid[]))',[current.human_id,parsed.data.ids,current.project_ids]);}
+      const items=(await c.query('SELECT n.*,u.name AS actor_name FROM graybox.collaboration_notifications n JOIN graybox.users u ON u.id=n.actor_id WHERE recipient_id=$1 AND ($2::uuid[] IS NULL OR project_id=ANY($2::uuid[])) ORDER BY created_at DESC,id DESC LIMIT 100',[current.human_id,current.project_ids])).rows;
+      return {items,unread_count:items.filter(x=>!x.read_at).length};
+    });
+  }
+  private async collaborationCommand(p:Principal,command:CollaborationCommand,input:unknown) {
+    return this.transaction(p,(c,current)=>this.idempotent(c,current,command.idempotency_key,input,async()=>{
+      p=current;await this.batch(c,p,command.batch_id);let result:any,before:Entity|null=null,entityType:'idea'|'experiment'='idea',createdType:'project'|'experiment'|null=null;
+      const owner=(e:Entity)=>{if(e.owner_id!==p.human_id)fail('FORBIDDEN','Only entity owner may edit',403);};
+      const project=async(id:string|null|undefined)=>{if(id)await this.entity(c,'project',id,true,p);else if(p.project_ids!==null)fail('FORBIDDEN','Unlinked ideas require unrestricted credential',403);};
+      const notify=async(e:Entity,kind:string)=>{if(e.owner_id&&e.owner_id!==p.human_id)await c.query('INSERT INTO graybox.collaboration_notifications(id,recipient_id,actor_id,agent_id,entity_type,entity_id,project_id,kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),e.owner_id,p.human_id,p.agent_id,entityType,e.id,e.project_id??null,kind]);};
+      if(command.type==='idea_create') {
+        await project(command.payload.project_id);const workspace=command.payload.project_id?(await this.entity(c,'project',command.payload.project_id,false,p)).workspace_id:command.payload.workspace_id??(await c.query('SELECT id FROM graybox.workspaces ORDER BY id LIMIT 1')).rows[0]?.id;
+        if(!(await c.query('SELECT id FROM graybox.workspaces WHERE id=$1',[workspace])).rowCount)fail('NOT_FOUND','Workspace not found',404);
+        const id=randomUUID();await c.query('INSERT INTO graybox.ideas(id,project_id,owner_id,data,workspace_id) VALUES($1,$2,$3,$4,$5)',[id,command.payload.project_id??null,p.human_id,await this.projectData(c,workspace,{name:command.payload.name,body:command.payload.body,priority:command.payload.priority??'medium',tags:command.payload.tags??[]}),workspace]);result=await idea(c,p,id,fail);
+      } else if(command.type==='idea_update') {
+        before=await idea(c,p,command.payload.id,fail);owner(before);this.revision(before,command.expected_revision);const fields=command.payload;
+        if(fields.project_id!==undefined)await project(fields.project_id);
+        await c.query('UPDATE graybox.ideas SET data=$2,project_id=$3,workspace_id=$4,revision=revision+1,updated_at=now() WHERE id=$1',[before.id,await this.projectData(c,fields.project_id?(await this.entity(c,'project',fields.project_id,false,p)).workspace_id as string:before.workspace_id as string,{name:fields.name??before.name,body:fields.body??before.body,priority:fields.priority??before.priority??'medium',tags:fields.tags??before.tags??[],progress:before.progress??'todo'}),fields.project_id===undefined?before.project_id:fields.project_id,fields.project_id?(await this.entity(c,'project',fields.project_id,false,p)).workspace_id:before.workspace_id]);result=await idea(c,p,before.id,fail);
+      } else if(command.type==='merge_resolve') {
+        const r=(await c.query('SELECT * FROM graybox.merge_requests WHERE id=$1',[command.payload.id])).rows[0];if(!r)return fail('NOT_FOUND','Merge request not found',404);
+        entityType=r.entity_type;const branch=await this.collaborationEntity(c,p,entityType,r.entity_id);before=await this.collaborationEntity(c,p,entityType,r.target_id);owner(before);this.revision(r,command.expected_revision);this.revision(before,command.payload.expected_target_revision);
+        if((await c.query('SELECT id FROM graybox.merge_decisions WHERE request_id=$1',[r.id])).rowCount)fail('MERGE_RESOLVED','Already resolved');
+        const chosen=command.payload.decision==='reject'?[]:command.payload.decision==='accept'?r.selected_fields:command.payload.selected_fields??[];
+        if(command.payload.decision==='partial'&&!chosen.length)fail('VALIDATION','Select fields for partial adoption',400);
+        if(chosen.some((k:string)=>!r.selected_fields.includes(k)))fail('VALIDATION','Cannot adopt unsubmitted content',400);
+        const fields=Object.fromEntries(chosen.map((k:string)=>[k,r.snapshot[k]]));
+        if(chosen.length){if(entityType==='idea'){await c.query('UPDATE graybox.ideas SET data=$2,revision=revision+1,updated_at=now() WHERE id=$1',[before.id,{name:before.name,body:before.body,priority:before.priority??'medium',tags:before.tags??[],progress:before.progress??'todo',...fields}]);}else await this.save(c,'experiment',before,{...this.business(before,'experiment'),...fields});}
+        result=await this.collaborationEntity(c,p,entityType,before.id);
+        await c.query('INSERT INTO graybox.merge_decisions(id,request_id,author_id,decision,selected_fields,target_revision) VALUES($1,$2,$3,$4,$5,$6)',[randomUUID(),r.id,p.human_id,command.payload.decision,JSON.stringify(chosen),result.revision]);
+        await notify(branch,'merge_decision');
+        await c.query('INSERT INTO graybox.activities(id,batch_id,credential_id,human_id,agent_id,session_id,entity_type,entity_id,project_id,type,before,after) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[randomUUID(),command.batch_id,p.id,p.human_id,p.agent_id,command.session_id??null,entityType,result.id,result.project_id??null,'collaboration_merge_target',before,result]);
+        result={...r,decision:command.payload.decision,target_revision:result.revision,adopted_fields:chosen};
+      } else {
+        entityType=command.payload.entity_type;if(command.type==='entity_start')await c.query('SELECT id FROM graybox.ideas WHERE id=$1 FOR UPDATE',[command.payload.entity_id]);before=await this.collaborationEntity(c,p,entityType,command.payload.entity_id);if(command.type!=='entity_start')this.revision(before,command.expected_revision);
+        if(command.type==='entity_start'){
+          if(before.progress==='completed')fail('INVALID_TRANSITION','Completed idea cannot be started',409);
+          this.revision(before,command.expected_revision);
+          const source={entity_type:'idea',entity_id:before.id,revision:before.revision,author_id:before.owner_id,snapshot:before},id=randomUUID();
+          if(before.project_id){
+            await project(before.project_id as string);
+            const seriesId=randomUUID();await c.query('INSERT INTO graybox.experiment_series(id,project_id,name,next_version) VALUES($1,$2,$3,2)',[seriesId,before.project_id,command.payload.name]);
+            await this.record(c,p,command.batch_id,'experiment_create','series',null,await this.entity(c,'series',seriesId),command.session_id);
+            await c.query('INSERT INTO graybox.experiments(id,project_id,series_id,version,revision,data) VALUES($1,$2,$3,1,1,$4)',[id,before.project_id,seriesId,{name:command.payload.name,goal:before.body,status:'idea',progress:'in_progress',priority:before.priority??'medium',tags:[],outcome:'inconclusive',summary:'',change_summary:'',report:null}]);
+            await c.query('INSERT INTO graybox.experiment_collaboration(experiment_id,owner_id,source) VALUES($1,$2,$3)',[id,p.human_id,source]);
+            result=await this.collaborationEntity(c,p,'experiment',id);createdType='experiment';
+          }else{
+            if(p.project_ids!==null)fail('FORBIDDEN','Restricted credentials cannot create projects',403);
+            await c.query('INSERT INTO graybox.projects(id,workspace_id,revision,data,creator_id) VALUES($1,$2,1,$3,$4)',[id,before.workspace_id,{name:command.payload.name,description:before.body,lifecycle:'in_progress',status:'active',priority:before.priority??'medium',tags:[],source},p.human_id]);
+            result=await this.entity(c,'project',id,false,p);createdType='project';
+          }
+          if(before.progress!=='in_progress'){
+            await c.query("UPDATE graybox.ideas SET data=data || '{\"progress\":\"in_progress\"}'::jsonb,revision=revision+1,updated_at=now() WHERE id=$1",[before.id]);
+            await c.query('INSERT INTO graybox.activities(id,batch_id,credential_id,human_id,agent_id,session_id,entity_type,entity_id,project_id,type,before,after) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[randomUUID(),command.batch_id,p.id,p.human_id,p.agent_id,command.session_id??null,'idea',before.id,before.project_id??null,'collaboration_idea_started',before,await idea(c,p,before.id,fail)]);
+          }
+          if(!(await c.query("SELECT id FROM graybox.collaboration_events WHERE entity_type='idea' AND entity_id=$1 AND author_id=$2 AND kind='join'",[before.id,p.human_id])).rowCount)await c.query("INSERT INTO graybox.collaboration_events(id,entity_type,entity_id,project_id,kind,author_id,agent_id,data) VALUES($1,'idea',$2,$3,'join',$4,$5,'{}')",[randomUUID(),before.id,before.project_id??null,p.human_id,p.agent_id]);
+          await notify(before,'join');
+          result={...result,started_kind:createdType};
+        } else if(command.type==='entity_branch') {
+          const source={entity_type:entityType,entity_id:before.id,revision:before.revision,author_id:before.owner_id,snapshot:before},id=randomUUID();
+          if(entityType==='idea'){await c.query('INSERT INTO graybox.ideas(id,project_id,owner_id,data,source,workspace_id) VALUES($1,$2,$3,$4,$5,$6)',[id,before.project_id??null,p.human_id,{name:command.payload.name??before.name,body:before.body,priority:before.priority??'medium',tags:before.tags??[]},source,before.workspace_id]);result=await idea(c,p,id,fail);}
+          else {const series=await this.entity(c,'series',String(before.series_id),true,p);const v=(await c.query('UPDATE graybox.experiment_series SET next_version=next_version+1 WHERE id=$1 RETURNING next_version-1 AS version',[series.id])).rows[0].version;await c.query('INSERT INTO graybox.experiments(id,project_id,series_id,version,revision,data) VALUES($1,$2,$3,$4,1,$5)',[id,before.project_id,before.series_id,v,{...this.business(before,'experiment'),name:command.payload.name??before.name,based_on:before.id,status:'idea',progress:'todo',outcome:'inconclusive',summary:'',change_summary:'',report:null}]);await c.query('INSERT INTO graybox.experiment_collaboration(experiment_id,owner_id,source) VALUES($1,$2,$3)',[id,p.human_id,source]);result=await this.collaborationEntity(c,p,entityType,id);}
+        } else if(command.type==='merge_submit') {
+          owner(before);const source=before.source as any;if(!source||source.entity_type!==entityType)fail('VALIDATION','Only a branch of the same entity type can submit merge',400);const target=await this.collaborationEntity(c,p,entityType,source.entity_id);
+          const allowed=entityType==='idea'?['name','body']:['name','goal','summary','change_summary','report'];if(command.payload.selected_fields.some(k=>!allowed.includes(k)))fail('VALIDATION','Field unavailable for entity',400);
+          await c.query('INSERT INTO graybox.activities(id,batch_id,credential_id,human_id,agent_id,session_id,entity_type,entity_id,project_id,type,before,after) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[randomUUID(),command.batch_id,p.id,p.human_id,p.agent_id,command.session_id??null,entityType,target.id,target.project_id??null,'collaboration_merge_requested',target,target]);
+          result=(await c.query('INSERT INTO graybox.merge_requests(id,entity_type,entity_id,target_id,project_id,author_id,snapshot,selected_fields) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),entityType,before.id,target.id,before.project_id??null,p.human_id,before,JSON.stringify(command.payload.selected_fields)])).rows[0];await notify(target,'merge_request');
+        } else {
+          if(command.type==='entity_agree'&&(p.kind!=='human'||before.owner_id===p.human_id))fail('FORBIDDEN','Agreement requires another human',403);
+          const kind=command.type==='entity_join'?'join':command.type==='entity_comment'?(command.payload.kind??'comment'):'agreement';
+          const data=command.type==='entity_comment'?{body:command.payload.body}:command.type==='entity_agree'?{agreed:command.payload.agreed}:{};
+          result=(await c.query('INSERT INTO graybox.collaboration_events(id,entity_type,entity_id,project_id,kind,author_id,agent_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),entityType,before.id,before.project_id??null,kind,p.human_id,p.agent_id,data])).rows[0];result={...result,revision:1};if(kind!=='join')await notify(before,kind);
+        }
+      }
+      result={...result,batch_id:command.batch_id};
+      // Immutable collaboration activities make the entire batch unavailable to legacy undo.
+      await c.query('INSERT INTO graybox.activities(id,batch_id,credential_id,human_id,agent_id,session_id,entity_type,entity_id,project_id,type,before,after) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[randomUUID(),command.batch_id,p.id,p.human_id,p.agent_id,command.session_id??null,createdType??entityType,result.id,createdType==='project'?result.id:result.project_id??before?.project_id??null,'collaboration_'+command.type,createdType?null:before,result]);
+      await c.query('UPDATE graybox.batches SET operation_count=operation_count+1,revision=revision+1 WHERE id=$1',[command.batch_id]);return result;
+    }));
   }
   private async canEdit(c:Pool|PoolClient,p:Principal,project:Entity) {
     return project.creator_id===p.human_id;
@@ -159,7 +295,7 @@ export class Service {
     const rows=(await this.pool.query(`SELECT * FROM graybox.${type} WHERE deleted_at IS NULL ${type==='experiments'&&project_id?'AND project_id=$1':''} ORDER BY ${type==='projects'?"CASE data->>'priority' WHEN 'high' THEN 0 WHEN 'low' THEN 2 ELSE 1 END,":''}created_at,id`,type==='experiments'&&project_id?[project_id]:[])).rows;
     const visible=rows.filter(row=>p.project_ids===null || p.project_ids.includes(type==='projects'?row.id:row.project_id)).map(row=>normalize({...Object.fromEntries(Object.entries(row).filter(([k])=>k!=='data')),...row.data}) as Entity);
     const key=tag?.trim().replace(/\s+/g,' ').toLowerCase();
-    return Promise.all(visible.filter(row=>!key || ((row.tags??[]) as string[]).some(t=>t.toLowerCase()===key)).map(row=>type==='projects'?this.presentProject(this.pool,p,row):row));
+    return Promise.all(visible.filter(row=>!key || ((row.tags??[]) as string[]).some(t=>t.toLowerCase()===key)).map(row=>type==='projects'?this.presentProject(this.pool,p,row):this.presentExperiment(this.pool,p,row)));
   }
   async tags(p:Principal,workspace?:string,q?:string) {
     p=await this.currentPrincipal(this.pool,p.id);
@@ -167,7 +303,8 @@ export class Service {
     const key=q?.trim().replace(/\s+/g,' ').toLowerCase();
     // Scoped agents only see tags already associated with accessible projects.
     const projects=p.project_ids===null?null:await this.list(p,'projects');
-    return rows.filter(row=>(!key || row.name.toLowerCase().includes(key)) && (!projects || projects.some(pr=>pr.workspace_id===row.workspace_id && ((pr.tags??[]) as string[]).includes(row.name))));
+    const children=projects?[...await this.list(p,'experiments'),...await this.ideas(p,{})]:[];
+    return rows.filter(row=>(!key || row.name.toLowerCase().includes(key)) && (!projects || projects.some(pr=>pr.workspace_id===row.workspace_id && [pr,...children.filter(e=>e.project_id===pr.id)].some(e=>((e.tags??[]) as string[]).includes(row.name)))));
   }
   async projectChildren(p:Principal,id:string,table:'retrospectives'|'comments') {
     p=await this.currentPrincipal(this.pool,p.id);await this.entity(this.pool,'project',id,false,p);
@@ -199,13 +336,14 @@ export class Service {
     const {data:business,...base}=after;return normalize({...base,...business}) as Entity;
   }
   private business(entity:Entity,type:'project'|'experiment') {
-    const fields=type==='project'?['name','description','status','repo_url','lifecycle','priority','tags']:['name','goal','summary','change_summary','status','based_on'];
+    const fields=type==='project'?['name','description','status','repo_url','lifecycle','priority','tags','source']:['name','goal','summary','change_summary','status','based_on','progress','priority','outcome','tags','report'];
     const data=Object.fromEntries(fields.filter(k=>entity[k]!==undefined).map(k=>[k,entity[k]]));
     if(type==='project') return {lifecycle:entity.status==='paused'?'paused':entity.status==='archived'?'completed':'in_progress',priority:'medium',tags:[],...data};
     return data;
   }
   async command(p:Principal,input:unknown) {
-    const parsed=commandSchema.safeParse(input); if(!parsed.success) return fail('VALIDATION','Invalid command shape or fields',400);
+    const collab=collaborationCommandSchema.safeParse(input); if(collab.success)return this.collaborationCommand(p,collab.data,input);
+    const parsed=legacyCommandSchema.safeParse(input); if(!parsed.success) return fail('VALIDATION','Invalid command shape or fields',400);
     const command=parsed.data;
     return this.transaction(p,(c,p)=>this.idempotent(c,p,command.idempotency_key,input,async()=> {
       const {type,batch_id,session_id,payload}=command;
@@ -240,7 +378,7 @@ export class Service {
         await this.record(c,p,batch_id,type,type==='comment_create'?'comment':'retrospective',null,result,session_id);
         await this.record(c,p,batch_id,type,'project',before,parent,session_id);
       } else if(type==='experiment_create') {
-        this.scope(p,payload.project_id);await this.editable(c,p,await this.entity(c,'project',payload.project_id,true));
+        this.scope(p,payload.project_id);await this.entity(c,'project',payload.project_id,true);
         let seriesId=payload.series_id;
         if(!seriesId) {
           seriesId=randomUUID();await c.query('INSERT INTO graybox.experiment_series(id,project_id,name) VALUES($1,$2,$3)',[seriesId,payload.project_id,payload.series_name]);
@@ -249,18 +387,22 @@ export class Service {
         const series=await this.entity(c,'series',seriesId,true,p);if(series.project_id!==payload.project_id) fail('VALIDATION','Series project mismatch',400);
         if(payload.based_on) {const source=await this.entity(c,'experiment',payload.based_on,false,p);if(source.project_id!==payload.project_id) fail('VALIDATION','Source project mismatch',400);}
         const v=(await c.query('UPDATE graybox.experiment_series SET next_version=next_version+1 WHERE id=$1 RETURNING next_version-1 AS version',[seriesId])).rows[0].version;
-        const id=randomUUID();await c.query('INSERT INTO graybox.experiments(id,project_id,series_id,version,revision,data) VALUES($1,$2,$3,$4,1,$5)',[id,payload.project_id,seriesId,v,{name:payload.name,goal:payload.goal,status:'idea',summary:'',change_summary:'',...(payload.based_on?{based_on:payload.based_on}:{})}]);
-        result=await this.entity(c,'experiment',id);await this.record(c,p,batch_id,type,'experiment',null,result,session_id);
+        const id=randomUUID();await c.query('INSERT INTO graybox.experiments(id,project_id,series_id,version,revision,data) VALUES($1,$2,$3,$4,1,$5)',[id,payload.project_id,seriesId,v,await this.projectData(c,(await this.entity(c,'project',payload.project_id,false,p)).workspace_id as string,{report:payload.report??null,tags:payload.tags??[],name:payload.name,goal:payload.goal,status:'idea',summary:'',change_summary:'',progress:payload.progress??'todo',priority:payload.priority??'medium',outcome:payload.outcome??'inconclusive',...(payload.based_on?{based_on:payload.based_on}:{})})]);
+        const sourceIdea=payload.source_idea_id?await idea(c,p,payload.source_idea_id,fail):null;
+        const sourceExperiment=payload.based_on?await this.presentExperiment(c,p,await this.entity(c,'experiment',payload.based_on,false,p)):null;const source=sourceIdea??sourceExperiment;
+        await c.query('INSERT INTO graybox.experiment_collaboration(experiment_id,owner_id,source) VALUES($1,$2,$3)',[id,p.human_id,source?{entity_type:sourceIdea?'idea':'experiment',entity_id:source.id,revision:source.revision,author_id:source.owner_id,snapshot:source}:null]);
+        result=await this.presentExperiment(c,p,await this.entity(c,'experiment',id));await this.record(c,p,batch_id,type,'experiment',null,result,session_id);
       } else {
         const id=type==='experiment_update'?payload.id:payload.experiment_id;
         const before=await this.entity(c,'experiment',id,true,p);
-        await this.editable(c,p,await this.entity(c,'project',String(before.project_id),true,p));
+        await this.experimentEditable(c,p,before);
         this.revision(before,command.expected_revision);
         let data=this.business(before,'experiment');
         if(type==='experiment_update') {
           const {id:ignored,...fields}=payload;
+          if((await experimentOwner(c,id)).owner_id!==p.human_id && Object.keys(fields).some(k=>!['summary','change_summary','progress','report'].includes(k)))fail('FORBIDDEN','Only leader can change experiment metadata',403);
           if(fields.status && !['idea','waiting_for_review'].includes(String(before.status))) fail('INVALID_TRANSITION','Only idea or waiting_for_review may resume experimenting');
-          data={...data,...fields};
+          data=await this.projectData(c,(await this.entity(c,'project',before.project_id as string,false,p)).workspace_id as string,{...data,...fields});
         } else if(type==='evidence_append') {
           const evidenceId=randomUUID();const {experiment_id,...fields}=payload;
           await c.query('INSERT INTO graybox.evidence(id,experiment_id,project_id,batch_id,type,source_kind,result,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[evidenceId,id,before.project_id,batch_id,fields.type,fields.source_kind,fields.result,fields.details]);
@@ -286,7 +428,7 @@ export class Service {
     if(batch.credential_id!==p.id) fail('FORBIDDEN','Only batch credential owner may undo',403);
     if(batch.undone_at || Date.now()-new Date(batch.created_at).getTime()>30*24*60*60*1000) fail('UNDO_UNAVAILABLE','Batch already undone or beyond 30 days');
     const rows=(await c.query('SELECT * FROM graybox.activities WHERE batch_id=$1 ORDER BY created_at,id',[batchId])).rows;
-    if(rows.some(a=>['comment','retrospective'].includes(a.entity_type))) fail('UNDO_UNAVAILABLE','This batch contains immutable comments or retrospectives; create a correction comment or a new retrospective instead');
+    if(rows.some(a=>a.type.startsWith('collaboration_') || ['comment','retrospective'].includes(a.entity_type))) fail('UNDO_UNAVAILABLE','This batch contains immutable comments or retrospectives; create a correction comment or a new retrospective instead');
     const changes=new Map<string,Change>();
     for(const a of rows) {
       this.scope(p,a.project_id);const key=`${a.entity_type}:${a.entity_id}`;const previous=changes.get(key);
@@ -307,6 +449,8 @@ export class Service {
         const checks: Array<[string,string,unknown[]]>=[];
         if(change.entity_type==='project' && (await c.query('SELECT id FROM graybox.comments WHERE project_id=$1 UNION ALL SELECT id FROM graybox.retrospectives WHERE project_id=$1',[change.entity_id])).rowCount) fail('UNDO_DEPENDENCY','Project has immutable comments or retrospectives; preserve the project');
         if(change.entity_type==='project' && (await c.query('SELECT user_id FROM graybox.project_agreements WHERE project_id=$1',[change.entity_id])).rowCount) fail('UNDO_DEPENDENCY','Project has external agreement history; preserve the project');
+        if(change.entity_type==='project' && (await c.query('SELECT id FROM graybox.ideas WHERE project_id=$1 UNION ALL SELECT entity_id AS id FROM graybox.collaboration_events WHERE project_id=$1 UNION ALL SELECT id FROM graybox.merge_requests WHERE project_id=$1',[change.entity_id])).rowCount)fail('UNDO_DEPENDENCY','Project has collaboration history');
+        if(change.entity_type==='experiment' && (await c.query("SELECT id FROM graybox.collaboration_events WHERE entity_type='experiment' AND entity_id=$1 UNION ALL SELECT id FROM graybox.merge_requests WHERE entity_type='experiment' AND (entity_id=$1 OR target_id=$1) UNION ALL SELECT experiment_id AS id FROM graybox.experiment_collaboration WHERE source->>'entity_id'=$2",[change.entity_id,change.entity_id])).rowCount)fail('UNDO_DEPENDENCY','Experiment has collaboration history');
         if(change.entity_type==='project') checks.push(['experiments','project_id',[change.entity_id]],['experiment_series','project_id',[change.entity_id]]);
         if(change.entity_type==='series') checks.push(['experiments','series_id',[change.entity_id]]);
         if(change.entity_type==='experiment') {

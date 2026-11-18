@@ -74,15 +74,26 @@ fn session_snapshot()->Result<SessionSnapshot,String> {
  snapshot_locked(&state,trusted)
 }
 fn cloud_endpoint()->Result<Option<String>,String> {Ok(session_snapshot()?.endpoint)}
+fn should_use_local(local_only:bool,credentials_configured:bool,server_configured:bool,endpoint_configured:bool,session_endpoint:bool)->bool {
+ if local_only || credentials_configured { true } else if server_configured || endpoint_configured { false } else { !session_endpoint }
+}
+pub(crate) fn local_runtime()->bool {
+ let local_only=std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1");
+ let credentials_configured=std::env::var("GRAYBOX_CREDENTIALS_PATH").is_ok();
+ let server_configured=std::env::var("GRAYBOX_SERVER_URL").is_ok();
+ let endpoint_configured=std::env::var("GRAYBOX_ENDPOINT").is_ok();
+ let session_endpoint=session().lock().unwrap().endpoint.is_some();
+ should_use_local(local_only,credentials_configured,server_configured,endpoint_configured,session_endpoint)
+}
 #[tauri::command] fn connection_info()->Result<Value,String> {
- if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1") { return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318","profile":{"id":"local-user","name":"本地用户","role":"owner"}})); }
+ if local_runtime() { return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318","profile":{"id":"local-user","name":"本地用户","role":"owner"}})); }
  let snapshot=session_snapshot()?;
  let endpoint=snapshot.endpoint;
  if endpoint.is_none() && std::env::var("GRAYBOX_CREDENTIALS_PATH").is_ok() { credentials()?; return Ok(json!({"mode":"local","endpoint":"http://127.0.0.1:4318"})); }
  Ok(json!({"mode":"cloud","endpoint":endpoint.unwrap_or_default(),"profile":snapshot.profile}))
 }
 #[tauri::command] fn configure_endpoint(endpoint:String)->Result<Value,String> {let origin=trusted_origin(&endpoint)?; session_store::clear()?; {let mut s=session().lock().unwrap();s.endpoint=Some(origin);s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;} connection_info()}
-#[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1"){return Ok(vec![Profile{id:"local-user".into(),name:"本地用户".into(),role:"owner".into()}]);}if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
+#[tauri::command] fn local_profiles()->Result<Vec<Profile>,String> {if local_runtime(){return Ok(vec![Profile{id:"local-user".into(),name:"本地用户".into(),role:"owner".into()}]);}if cloud_endpoint()?.is_some(){return Err("云端不支持切换本地身份。".into());} Ok(credentials()?.humans.into_iter().map(|h|Profile{id:h.id,name:h.name,role:h.role}).collect())}
 async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:Option<String>)->Result<Value,String> {
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(30)).build().map_err(|_|"无法创建连接。")?;
  let url=format!("{}{}",endpoint,path);
@@ -108,7 +119,7 @@ async fn fetch_api(endpoint:&str,path:&str,method:&str,body:Option<Value>,token:
  if !allowed_request(&path,&method){return Err("请求路径或方法不被允许。".into());}
  let snapshot=session_snapshot()?;
  if snapshot.endpoint.is_some() && !profile_id.is_empty() && snapshot.profile.as_ref().and_then(|p|p["id"].as_str())!=Some(profile_id.as_str()) {return Err("请求身份与当前会话不匹配。".into());}
- let (endpoint,token)=if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1"){("http://127.0.0.1:4318".into(),None)}else if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
+ let (endpoint,token)=if local_runtime(){("http://127.0.0.1:4318".into(),None)}else if let Some(endpoint)=snapshot.endpoint.clone() {(endpoint,snapshot.token.clone())}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
  if session().lock().unwrap().generation!=snapshot.generation {return Err("会话已变更，请重新读取数据。".into());}
  let result=fetch_api(&endpoint,&path,&method,body,token.clone()).await?;
  if (path=="/v1/auth/logout" && result.get("error").is_none()) || result["error"]["code"]=="UNAUTHORIZED" {let mut s=session().lock().unwrap();if s.generation==snapshot.generation && s.token==token {session_store::clear()?;s.token=None;s.token_origin=None;s.profile=None;s.generation+=1;}}
@@ -134,6 +145,7 @@ fn main(){tauri::Builder::default()
 #[cfg(test)] mod tests {
  use super::*;
  #[test] fn native_snapshot_keeps_endpoint_token_and_generation_coherent(){let mut state=Session::default(); state.endpoint=Some("https://a.example".into());state.token=Some("token-a".into());state.token_origin=state.endpoint.clone();state.generation=1;let old=snapshot_locked(&state,None).unwrap();state.endpoint=Some("https://b.example".into());state.token=Some("token-b".into());state.token_origin=state.endpoint.clone();state.generation=2;let new=snapshot_locked(&state,None).unwrap();assert_eq!(old.endpoint.as_deref(),Some("https://a.example"));assert_eq!(old.token.as_deref(),Some("token-a"));assert_eq!(old.generation,1);assert_eq!(new.endpoint.as_deref(),Some("https://b.example"));assert_eq!(new.token.as_deref(),Some("token-b"));state.token_origin=Some("https://a.example".into());assert!(snapshot_locked(&state,None).is_err());}
+ #[test] fn direct_launch_without_cloud_configuration_uses_local_mode(){assert!(should_use_local(false,false,false,false,false));assert!(!should_use_local(false,false,true,false,false));assert!(!should_use_local(false,false,false,true,false));assert!(!should_use_local(false,false,false,false,true));assert!(should_use_local(true,false,true,true,true));}
  #[test]
  #[ignore = "requires explicitly configured local development API and credential file"]
  fn native_bridge_reads_real_local_api_without_exposing_tokens(){let profiles=local_profiles().expect("local profiles available"); assert_eq!(profiles.len(),3); let public=serde_json::to_value(&profiles).unwrap();assert!(public.as_array().unwrap().iter().all(|p|p.get("token").is_none()));let me=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/me".into(),"GET".into(),None)).unwrap();assert_eq!(me["data"]["kind"],"human");let workspaces=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),"/v1/workspaces".into(),"GET".into(),None)).unwrap();let workspace=workspaces["data"][0]["id"].as_str().unwrap();let tags=tauri::async_runtime::block_on(api_request(profiles[0].id.clone(),format!("/v1/tags?workspace_id={}&q=%E6%B8%B8%E6%88%8F",workspace),"GET".into(),None)).unwrap();assert!(tags["data"].is_array());}

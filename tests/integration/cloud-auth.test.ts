@@ -17,6 +17,13 @@ test('pairing has independent codes and one pending result',async()=>{const star
 import {bootstrapCloud} from '../../scripts/cloud-bootstrap.ts';
 async function call(path:string,body:unknown={},token?:string){const r=await app.inject({method:'POST',url:path,payload:JSON.stringify(body),headers:token?{authorization:`Bearer ${token}`,'content-type':'application/json'}:{'content-type':'application/json'}});return {status:r.statusCode,...r.json()};}
 async function owner(){const invitation=await bootstrapCloud(pool);return (await call('/v1/auth/redeem',{code:invitation.code,username:'Owner',password:'long secure password!',name:'Owner'})).data;}
+test('remembered human login survives normal time expiry but logout revokes it',async()=>{
+ const o=await owner();expect(o.expires_at).toBe('9999-12-31T23:59:59.000Z');
+ const {Service}=await import('../../packages/core/src/service.ts');const service=new Service(pool,'cloud');
+ expect((await service.authenticate(o.token)).human_id).toBe(o.profile.id);
+ expect((await call('/v1/auth/logout',{},o.token)).status).toBe(200);
+ await expect(service.authenticate(o.token)).rejects.toMatchObject({code:'UNAUTHORIZED'});
+});
 test('owner code is hashed, one-time, and login username normalized',async()=>{const code=await bootstrapCloud(pool);const body={code:code.code,username:'Owner',password:'long secure password!',name:'Owner'};const result=await call('/v1/auth/redeem',body);expect(result.status).toBe(200);expect((await call('/v1/auth/redeem',body)).status).toBe(409);expect((await call('/v1/auth/login',{username:'OWNER',password:body.password})).status).toBe(200);expect((await pool.query('SELECT code_hash FROM graybox.invitations')).rows[0].code_hash).not.toBe(code.code);});
 test('concurrent redemption has one winner',async()=>{const code=await bootstrapCloud(pool);const results=await Promise.all(['a','b'].map(s=>call('/v1/auth/redeem',{code:code.code,username:`user_${s}`,password:'long secure password!',name:s})));expect(results.map(x=>x.status).sort()).toEqual([200,409]);});
 test('agent approval binds human and retrieval consumes credential once',async()=>{const o=await owner();const pair=(await call('/v1/auth/pair/start',{name:'Agent'})).data;expect((await call('/v1/agents/pair/approve',{user_code:pair.user_code,project_ids:null},o.token)).status).toBe(200);const approved=await call('/v1/auth/pair/poll',{device_code:pair.device_code});expect(approved.data.human_id).toBe(o.profile.id);expect(approved.data.status).toBe('approved');expect((await call('/v1/auth/pair/poll',{device_code:pair.device_code})).status).toBe(409);expect((await call('/v1/members/invite',{},approved.data.token)).status).toBe(401);});

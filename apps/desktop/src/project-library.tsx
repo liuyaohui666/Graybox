@@ -4,9 +4,10 @@ import {writeSafety} from './write-safety.ts';
 import {request} from './platform.ts';
 import {ProjectAgreement} from './team-social.tsx';
 import {ProjectRow} from './project-row.tsx';
+import {ProjectBoard} from './project-board.tsx';
 import {Attribution} from './avatars.tsx';
 import type {Project,Experiment} from './model.ts';
-import {addTag,filterProjects,prioritizedIdeas,lifecycleNames,lifecycleLabel,priorityNames,outcomeNames,outcomeLabel,reportSections,reportPayload,normalizeTag} from './project-library-model.ts';
+import {addTag,filterProjects,lifecycleNames,lifecycleLabel,priorityNames,outcomeNames,outcomeLabel,reportSections,reportPayload,normalizeTag} from './project-library-model.ts';
 interface Report {author_id?:string;id:string;project_id:string;title:string;outcome:string;author_name:string;created_at:string;custom_sections:{title:string;content:string}[];[key:string]:unknown}
 interface Comment {author_id?:string;id:string;body:string;author_name:string;created_at:string;agent_id?:string|null}
 interface Draft {name:string;description:string;lifecycle:string;priority:string;tags:string[];revision:number}
@@ -15,6 +16,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
   const pendingWrite=useSyncExternalStore(writeSafety.subscribe,writeSafety.snapshot,()=>null);
   const [selected,setSelected]=useState(''), [project,setProject]=useState<Project|null>(null), [draft,setDraft]=useState<Draft|null>(null);
   const [reports,setReports]=useState<Report[]>([]),[comments,setComments]=useState<Comment[]>([]),[recent,setRecent]=useState<Report[]>([]);
+  const [reviewedIds,setReviewedIds]=useState<Set<string>>(()=>new Set());
   const [catalog,setCatalog]=useState<{id:string;name:string;workspace_id:string}[]>([]),[search,setSearch]=useState(''),[tagQuery,setTagQuery]=useState('');
   const [error,setError]=useState(''),[notice,setNotice]=useState(''),[loading,setLoading]=useState(false),[reportOpen,setReportOpen]=useState(false),[metadataOpen,setMetadataOpen]=useState(false),[custom,setCustom]=useState<{title:string;content:string}[]>([]);
   const generation=useRef(0), active=useRef({profile,id:''}), dirty=useRef(false), writing=useRef(false), reads=useRef(0);
@@ -36,14 +38,17 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     const update=()=>{if(!writing.current)void load(selected).catch(e=>{if(g===generation.current)setError(e.message);});};const timer=setInterval(update,15000);window.addEventListener('focus',update);
     return()=>{generation.current++;clearInterval(timer);window.removeEventListener('focus',update);};
   },[selected,profile]);
-  useEffect(()=>{setSelected('');setSearch('');setRecent([]);},[profile]);
+  useEffect(()=>{setSelected('');setSearch('');setRecent([]);setReviewedIds(new Set());},[profile]);
   useEffect(()=>{if(createdId)setSelected(createdId);},[createdId]);
-  useEffect(()=>{const identity=profile,g=generation.current;let cancelled=false;
+  useEffect(()=>{const identity=profile;let cancelled=false;
     const workspaces=[...new Set(projects.map(p=>p.workspace_id))];
     void Promise.all(workspaces.map(id=>request<{id:string;name:string;workspace_id:string}[]>(identity,`/v1/tags?workspace_id=${encodeURIComponent(id)}&q=${encodeURIComponent(tagQuery)}`))).then(v=>{if(!cancelled && active.current.profile===identity)setCatalog(v.flat());}).catch(e=>{if(!cancelled)setError(e.message);});
-    if(page==='home') void Promise.all(projects.map(p=>request<Report[]>(identity,`/v1/projects/${p.id}/retrospectives`))).then(v=>{if(!cancelled && active.current.profile===identity)setRecent(v.flat().sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,6));}).catch(e=>{if(!cancelled && g===generation.current)setError(e.message);});
     return()=>{cancelled=true;};
   },[projects,profile,tagQuery,page]);
+  useEffect(()=>{const identity=profile;let cancelled=false;
+    if(page==='home') void Promise.all(projects.map(p=>request<Report[]>(identity,`/v1/projects/${p.id}/retrospectives`))).then(v=>{if(!cancelled && active.current.profile===identity){const all=v.flat();setReviewedIds(new Set(all.map(r=>r.project_id)));setRecent(all.sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,6));}}).catch(e=>{if(!cancelled && active.current.profile===identity)setError(e.message);});
+    return()=>{cancelled=true;};
+  },[projects,profile,page]);
   function change(values:Partial<Draft>) {dirty.current=true;setDraft(d=>d?{...d,...values}:d);}
   async function write(type:string,payload:object,revision:number,onSuccess?:()=>void) {
     if(writing.current)return false;
@@ -62,7 +67,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
     {error&&<div className="error" role="alert"><span>{error}</span><button disabled={busy} onClick={()=>{if(selected)void load(selected).catch(e=>setError(e.message));else void refresh().catch(e=>setError(e.message));}}>重新读取最新数据</button></div>}
     {notice&&<p className="notice" role="status">{notice}</p>}
     {selected?<>
-      <button className="text-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked()){if(onBack)onBack();else setSelected('');}}}>← 返回{backLabel??(page==='home'?'首页':'项目库')}</button>
+      <button className="secondary back-button" disabled={busy||!!pendingWrite} onClick={()=>{if(!blocked()){if(onBack)onBack();else setSelected('');}}}>← 返回{backLabel??(page==='home'?'首页':'项目库')}</button>
       {loading&&<p className="empty">正在读取项目…</p>}
       {project&&draft&&<>
         <div className="project-detail-heading"><h2>{project.name}</h2><span>owner <Attribution id={project.owner_id ?? project.creator_id} name={project.owner_name ?? project.creator_name} detail/></span></div>
@@ -93,7 +98,7 @@ export function ProjectLibrary({profile,page,projects,experiments,createdId,busy
         <details className="library-report"><summary>历史实验记录（{experiments.filter(e=>e.project_id===project.id).length}）</summary>{experiments.filter(e=>e.project_id===project.id).map(e=><button className="experiment-row" key={e.id} disabled={locked} onClick={()=>{if(!blocked())openExperiment(e.id);}}><span>{e.name} · v{e.version}</span><span>查看实验与证据 →</span></button>)}</details>
       </>}
     </>:page==='home'?<>
-      <div className="section-heading"><h2>待推进 <span>{prioritizedIdeas(projects).length}</span></h2><span className="muted">按优先级排序</span></div><div className="project-list">{prioritizedIdeas(projects).map(card)}</div>{!prioritizedIdeas(projects).length&&<p className="empty">还没有待推进的创意。</p>}
+      <ProjectBoard projects={projects} reviewedIds={reviewedIds} locked={locked} open={id=>{if(!blocked())setSelected(id);}}/>
       <div className="section-heading spaced"><h2>最近经验</h2></div>{recent.map(r=><button className="experiment-row" key={r.id} disabled={locked} onClick={()=>{if(!blocked())setSelected(r.project_id);}}><span><strong>{r.title}</strong><small>{projects.find(p=>p.id===r.project_id)?.name} · <Attribution id={r.author_id} name={r.author_name} agentId={r.agent_id as string|null}/></small></span><span>{outcomeLabel(r.outcome)}</span><time>{stamp(r.created_at)}</time></button>)}{!recent.length&&<p className="empty compact">尚无项目经验报告。</p>}
     </>:<>
       <div className="filters project-search"><input aria-label="搜索项目库" value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索名称、说明或标签…"/></div>

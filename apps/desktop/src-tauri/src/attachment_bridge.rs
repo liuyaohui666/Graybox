@@ -1,7 +1,7 @@
 use base64::{Engine as _,engine::general_purpose::{STANDARD,URL_SAFE_NO_PAD}};
 use serde_json::{Value,json};
 use std::time::Duration;
-use super::{session_snapshot,session,credentials};
+use super::{local_runtime,session_snapshot,session,credentials};
 const MAX:usize=50*1024*1024;
 fn allowed(path:&str,upload:bool)->bool {
  if upload{return path=="/v1/attachments/upload";}
@@ -12,7 +12,7 @@ pub async fn attachment_transfer(profile_id:String,path:String,metadata:Option<V
  let upload=data_base64.is_some();if !allowed(&path,upload){return Err("附件请求不被允许。".into());}
  let snapshot=session_snapshot()?;
  if snapshot.endpoint.is_some()&&snapshot.profile.as_ref().and_then(|p|p["id"].as_str())!=Some(profile_id.as_str()){return Err("附件身份与当前会话不匹配。".into());}
- let (endpoint,token)=if std::env::var("GRAYBOX_LOCAL_ONLY").ok().as_deref()==Some("1"){("http://127.0.0.1:4318".into(),None)}else if let Some(endpoint)=snapshot.endpoint.clone(){(endpoint,Some(snapshot.token.clone().ok_or("请先登录。")?))}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
+ let (endpoint,token)=if local_runtime(){("http://127.0.0.1:4318".into(),None)}else if let Some(endpoint)=snapshot.endpoint.clone(){(endpoint,Some(snapshot.token.clone().ok_or("请先登录。")?))}else{("http://127.0.0.1:4318".into(),Some(credentials()?.humans.into_iter().find(|h|h.id==profile_id).ok_or("本地身份不存在。")?.token))};
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(90)).build().map_err(|_|"无法创建连接。")?;
  let mut request=if upload{client.post(format!("{}{}",endpoint,path))}else{client.get(format!("{}{}",endpoint,path))};if let Some(value)=token.clone(){request=request.bearer_auth(value);}
  if let Some(encoded)=data_base64{

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { openLocalDatabase } from '../../../packages/local-db/src/index.ts';
+import { openLocalDatabase, withoutPriority } from '../../../packages/local-db/src/index.ts';
 
 const root = process.env.GRAYBOX_DATA_ROOT || 'D:/Graybox';
 const app = Fastify({ logger: false });
@@ -25,6 +25,18 @@ const profileFile = join(root, 'profile.json');
 const now = () => new Date().toISOString();
 const wrap = (data: unknown) => ({ data });
 
+function removeLegacyPriorities() {
+  for (const table of ['projects', 'ideas', 'experiments']) {
+    const rows = db.prepare(`SELECT id,data FROM ${table}`).all() as any[];
+    for (const row of rows) {
+      const original = json(row);
+      const cleaned = withoutPriority(original);
+      if (JSON.stringify(original) !== JSON.stringify(cleaned)) db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(cleaned), row.id);
+    }
+  }
+}
+removeLegacyPriorities();
+
 type StoredProfile = { name: string; avatar_data: string | null };
 async function profile(): Promise<StoredProfile> {
   try {
@@ -34,16 +46,16 @@ async function profile(): Promise<StoredProfile> {
 async function saveProfile(next: StoredProfile) { await writeFile(profileFile, JSON.stringify(next, null, 2), 'utf8'); }
 function json(row: any) { try { return JSON.parse(row.data); } catch { return {}; } }
 function project(row: any) {
-  const data = json(row);
-  return { ...data, id: row.id, name: row.name, description: data.description || '', revision: 1, created_at: row.created_at, updated_at: row.updated_at, workspace_id: 'local-workspace', creator_id: 'local-user', can_edit: true, owner_id: 'local-user', owner_name: '本地用户', priority: data.priority || 'medium', lifecycle: data.lifecycle || (data.status === 'completed' ? 'completed' : 'in_progress'), status: data.status || 'active', tags: data.tags || [] };
+  const data = withoutPriority(json(row));
+  return { ...data, id: row.id, name: row.name, description: data.description || '', revision: 1, created_at: row.created_at, updated_at: row.updated_at, workspace_id: 'local-workspace', creator_id: 'local-user', can_edit: true, owner_id: 'local-user', owner_name: '本地用户', lifecycle: data.lifecycle || (data.status === 'completed' ? 'completed' : 'in_progress'), status: data.status || 'active', tags: data.tags || [] };
 }
 function idea(row: any) {
-  const data = json(row);
-  return { ...data, id: row.id, name: row.name, body: data.body || '', revision: 1, project_id: row.project_id, created_at: row.created_at, updated_at: row.updated_at, owner_id: 'local-user', owner_name: '本地用户', can_edit: true, status: data.status || 'idea', priority: data.priority || 'medium', tags: data.tags || [] };
+  const data = withoutPriority(json(row));
+  return { ...data, id: row.id, name: row.name, body: data.body || '', revision: 1, project_id: row.project_id, created_at: row.created_at, updated_at: row.updated_at, owner_id: 'local-user', owner_name: '本地用户', can_edit: true, status: data.status || 'idea', tags: data.tags || [] };
 }
 function experiment(row: any) {
-  const data = json(row);
-  return { ...data, id: row.id, name: row.name, revision: 1, project_id: row.project_id, created_at: row.created_at, updated_at: row.updated_at, owner_id: 'local-user', owner_name: '本地用户', can_edit: true, progress: data.progress || 'in_progress', priority: data.priority || 'medium', outcome: data.outcome || 'inconclusive', status: data.status || 'experimenting', series_id: data.series_id || row.id };
+  const data = withoutPriority(json(row));
+  return { ...data, id: row.id, name: row.name, revision: 1, project_id: row.project_id, created_at: row.created_at, updated_at: row.updated_at, owner_id: 'local-user', owner_name: '本地用户', can_edit: true, progress: data.progress || 'in_progress', outcome: data.outcome || 'inconclusive', status: data.status || 'experimenting', series_id: data.series_id || row.id };
 }
 function activity(row: any) { return { ...json(row), id: row.id, entity_type: row.entity_type, entity_id: row.entity_id, project_id: null, human_id: 'local-user', created_at: row.created_at }; }
 
@@ -118,7 +130,7 @@ app.post('/v1/commands', async (req: any, reply) => {
   db.exec('BEGIN');
   try {
     if (command.type === 'project_create') {
-      const data = { name: String(payload.name || '').trim(), description: payload.description || '', status: payload.status || 'active', lifecycle: payload.lifecycle || 'in_progress', priority: payload.priority || 'medium', tags: Array.isArray(payload.tags) ? payload.tags : [] };
+      const data = { name: String(payload.name || '').trim(), description: payload.description || '', status: payload.status || 'active', lifecycle: payload.lifecycle || 'in_progress', tags: Array.isArray(payload.tags) ? payload.tags : [] };
       if (!data.name) throw new Error('项目名称不能为空。');
       db.prepare('INSERT INTO projects(id,name,data,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, data.name, JSON.stringify(data), timestamp, timestamp);
       for (const tag of data.tags) db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(String(tag));
@@ -127,7 +139,7 @@ app.post('/v1/commands', async (req: any, reply) => {
       return wrap(project({ id, name: data.name, data: JSON.stringify(data), created_at: timestamp, updated_at: timestamp }));
     }
     if (command.type === 'idea_create') {
-      const data = { name: String(payload.name || '').trim(), body: payload.body || '', status: payload.status || 'idea', priority: payload.priority || 'medium', tags: Array.isArray(payload.tags) ? payload.tags : [] };
+      const data = { name: String(payload.name || '').trim(), body: payload.body || '', status: payload.status || 'idea', tags: Array.isArray(payload.tags) ? payload.tags : [] };
       if (!data.name) throw new Error('想法名称不能为空。');
       db.prepare('INSERT INTO ideas(id,project_id,name,data,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id, payload.project_id ?? null, data.name, JSON.stringify(data), timestamp, timestamp);
       for (const tag of data.tags) db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(String(tag));
@@ -137,7 +149,7 @@ app.post('/v1/commands', async (req: any, reply) => {
     if (command.type === 'experiment_create') {
       const projectId = String(payload.project_id || '');
       if (!db.prepare('SELECT id FROM projects WHERE id=?').get(projectId)) throw new Error('实验必须关联已有项目。');
-      const data = { name: String(payload.name || '').trim(), goal: payload.goal || '', summary: '', change_summary: '', series_id: randomUUID(), status: 'experimenting', progress: 'in_progress', priority: payload.priority || 'medium', tags: Array.isArray(payload.tags) ? payload.tags : [] };
+      const data = { name: String(payload.name || '').trim(), goal: payload.goal || '', summary: '', change_summary: '', series_id: randomUUID(), status: 'experimenting', progress: 'in_progress', tags: Array.isArray(payload.tags) ? payload.tags : [] };
       if (!data.name) throw new Error('实验名称不能为空。');
       db.prepare('INSERT INTO experiments(id,project_id,name,data,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id, projectId, data.name, JSON.stringify(data), timestamp, timestamp);
       for (const tag of data.tags) db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(String(tag));
@@ -148,7 +160,7 @@ app.post('/v1/commands', async (req: any, reply) => {
     if (table) {
       const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(payload.id) as any;
       if (!row) { db.exec('ROLLBACK'); return reply.code(404).send({ error: { code: 'NOT_FOUND', message: '记录不存在。' } }); }
-      const data = { ...json(row), ...payload };
+      const data = withoutPriority({ ...json(row), ...payload });
       const name = String(data.name || row.name).trim();
       db.prepare(`UPDATE ${table} SET name=?,data=?,updated_at=? WHERE id=?`).run(name, JSON.stringify({ ...data, name }), timestamp, payload.id);
       for (const tag of Array.isArray(data.tags) ? data.tags : []) db.prepare('INSERT OR IGNORE INTO tags(name) VALUES(?)').run(String(tag));

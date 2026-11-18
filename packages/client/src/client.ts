@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { commandSchema, undoSchema, type Entity } from '../../contracts/src/index.ts';
+import type {Attachment,UploadMetadata} from '../../core/src/attachments.ts';
 
 export class ClientError extends Error {
   constructor(public readonly code:string,message:string,public readonly status=400){super(message);this.name='ClientError';}
@@ -32,9 +33,9 @@ export class ApiClient {
     this.#token=options.token;this.#timeout=options.timeout_ms??8000;
     if(!Number.isInteger(this.#timeout)||this.#timeout<1||this.#timeout>60000)throw new ClientError('VALIDATION','Timeout must be 1–60000 ms');
   }
-  private async request<T>(method:'GET'|'POST',path:string,body?:unknown,authenticated=true):Promise<T> {
+  private async request<T>(method:'GET'|'POST',path:string,body?:unknown,authenticated=true,raw?:{bytes:Buffer;metadata:UploadMetadata}):Promise<T> {
     let response:Response;
-    try{response=await fetch(this.endpoint+path,{method,redirect:'manual',signal:AbortSignal.timeout(this.#timeout),headers:{...(authenticated?{authorization:`Bearer ${this.#token}`} : {}),...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});}
+    try{response=await fetch(this.endpoint+path,{method,redirect:'manual',signal:AbortSignal.timeout(this.#timeout),headers:{...(authenticated?{authorization:`Bearer ${this.#token}`} : {}),...(raw?{'content-type':'application/octet-stream','x-graybox-metadata':Buffer.from(JSON.stringify(raw.metadata)).toString('base64url')}:body===undefined?{}:{'content-type':'application/json'})},...(raw?{body:new Uint8Array(raw.bytes)}:body===undefined?{}:{body:JSON.stringify(body)})});}
     catch{throw new ClientError('CONNECTION_FAILED','Local API request failed or timed out; retry only with the same stable key',503);}
     if(response.status>=300&&response.status<400)throw new ClientError('REDIRECT_REJECTED','API redirect rejected; credentials were not forwarded',502);
     let result:{data?:T;error?:{code?:unknown;message?:unknown}};
@@ -49,10 +50,17 @@ export class ApiClient {
     if(!parsed.success)throw new ClientError('AGENT_REQUIRED','CLI and MCP require a distinct local agent identity',403);return parsed.data;
   }
   workspaces(){return this.request<Array<{id:string;name:string}>>('GET','/v1/workspaces');}
+  attachments(target:{entity_type:'project'|'idea'|'experiment';entity_id:string}){return this.request<Attachment[]>('GET',`/v1/attachments?entity_type=${target.entity_type}&entity_id=${id(target.entity_id)}`);}
+  uploadAttachment(metadata:UploadMetadata,bytes:Buffer){return this.request<Attachment>('POST','/v1/attachments/upload',undefined,true,{metadata,bytes});}
+  linkAttachment(metadata:{idempotency_key:string;entity_type:'project'|'idea'|'experiment';entity_id:string;name:string;caption:string;kind:'repository'|'demo_link';url:string}){return this.request<Attachment>('POST','/v1/attachments/link',metadata);}
   projects(){return this.request<Project[]>('GET','/v1/projects');}
   project(projectId:string){return this.request<Project>('GET',`/v1/projects/${id(projectId)}`);}
   experiment(experimentId:string){return this.request<Experiment>('GET',`/v1/experiments/${id(experimentId)}`);}
   experiments(projectId:string){return this.request<Experiment[]>('GET',`/v1/experiments?project_id=${id(projectId)}`);}
+  idea(ideaId:string){return this.request<Entity>('GET',`/v1/ideas/${id(ideaId)}`);}
+  mergeRequest(requestId:string){return this.request<Entity>('GET',`/v1/merge-requests/${id(requestId)}`);}
+  ideas(filters:{project_id?:string;unlinked?:boolean}={}){const query=new URLSearchParams();if(filters.project_id)query.set('project_id',id(filters.project_id));if(filters.unlinked)query.set('unlinked','true');return this.request<Entity[]>('GET',`/v1/ideas${query.size?'?'+query:''}`);}
+  collaboration(entity_type:'idea'|'experiment',entity_id:string){return this.request<{comments:Entity[];agreements:{count:number;agreed:boolean};participants:Entity[];merge_requests:Entity[]}>('GET',`/v1/collaboration?entity_type=${entity_type}&entity_id=${id(entity_id)}`);}
   retrospectives(projectId:string){return this.request<Array<Record<string,unknown>>>('GET',`/v1/projects/${id(projectId)}/retrospectives`);}
   comments(projectId:string){return this.request<Array<Record<string,unknown>>>('GET',`/v1/projects/${id(projectId)}/comments`);}
   tags(workspaceId:string,q?:string){const query=new URLSearchParams({workspace_id:id(workspaceId)});if(q)query.set('q',q);return this.request<Array<{id:string;workspace_id:string;name:string}>>('GET',`/v1/tags?${query}`);}

@@ -9,7 +9,7 @@ import { gitRoot, gitValue, gitMetadata } from './git.ts';
 
 export const defaultConfigPath=fileURLToPath(new URL('../../../.local/client.json',import.meta.url));
 const bindingSchema=z.strictObject({version:z.literal(1),environment_id:z.uuid(),workspace_id:z.uuid(),project_id:z.uuid()});
-const localSchema=z.strictObject({version:z.literal(1),active_experiment_id:z.uuid().nullable()});
+const localSchema=z.strictObject({version:z.literal(1),active_experiment_id:z.uuid().nullable(),active_idea_id:z.uuid().nullable().optional()});
 const environmentSchema=z.strictObject({environment_id:z.uuid(),endpoint:z.string(),credentials_file:z.string(),agent_id:z.uuid(),mode:z.enum(['local','cloud']).optional()});
 const configSchema=z.strictObject({version:z.literal(1),environments:z.array(environmentSchema).min(1)});
 const agentSchema=z.object({id:z.uuid(),human_id:z.uuid(),name:z.string(),token:z.string().min(1),project_ids:z.array(z.uuid()).nullable()});
@@ -59,9 +59,12 @@ async function resolveContextInternal(options:ContextOptions,ignoreActive=false)
   const localPath=join(discovery.root,'.graybox','local.json');const local=!ignoreActive&&await exists(localPath)?parse(localSchema,await json(localPath,'LOCAL_CONTEXT_INVALID'),'LOCAL_CONTEXT_INVALID'):null;
   const active=local?.active_experiment_id?await trusted.api.experiment(local.active_experiment_id):null;
   if(active&&active.project_id!==project.id)fail('EXPERIMENT_MISMATCH','Active experiment belongs to another project');
+  const activeIdea=local?.active_idea_id?await trusted.api.idea(local.active_idea_id):null;
+  if(activeIdea?.project_id&&activeIdea.project_id!==project.id)fail('PROJECT_MISMATCH','Active idea belongs to another project');
+  if(activeIdea&&activeIdea.workspace_id!==discovery.binding.workspace_id)fail('WORKSPACE_MISMATCH','Active idea belongs to another workspace');
   const paths={cwd,project_root:discovery.root,binding_file:discovery.path,local_context_file:localPath};
-  const safe={...discovery.binding,agent:trusted.identity,paths,project,active_experiment:active,git:options.includeGit?await gitMetadata(cwd):undefined};
-  return {...trusted,binding:discovery.binding,project,active_experiment:active,paths,safe};
+  const safe={...discovery.binding,agent:trusted.identity,paths,project,active_experiment:active,active_idea:activeIdea,git:options.includeGit?await gitMetadata(cwd):undefined};
+  return {...trusted,binding:discovery.binding,project,active_experiment:active,active_idea:activeIdea,paths,safe};
 }
 export async function resolveContext(options:ContextOptions){return resolveContextInternal(options);}
 export async function undoExecutionContext(options:ContextOptions,batchId:string){
@@ -105,6 +108,11 @@ export async function activateExperiment(options:ContextOptions&{experiment_id:s
   await contextDirectory(ctx.paths.project_root);
   await excludeLocal(ctx.paths.project_root);await atomicJson(ctx.paths.local_context_file,{version:1,active_experiment_id:options.experiment_id},true);return {active_experiment_id:options.experiment_id};
 }
+export async function activateIdea(options:ContextOptions&{idea_id:string|null}){
+  const ctx=await resolveContextInternal(options,true);if(options.idea_id){const idea=await ctx.api.idea(options.idea_id);if(idea.project_id&&idea.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Selected idea belongs to another project');if(idea.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Selected idea belongs to another workspace');}
+  await contextDirectory(ctx.paths.project_root);await excludeLocal(ctx.paths.project_root);
+  await atomicJson(ctx.paths.local_context_file,{version:1,active_experiment_id:null,active_idea_id:options.idea_id},true);return {active_idea_id:options.idea_id};
+}
 export async function initializeConfig(options:{configPath?:string;credentials_file:string;endpoint:string;agent_id:string;replace?:boolean}){
   if(!isAbsolute(options.credentials_file))fail('CONFIG_INVALID','Credential file path must be absolute');const path=configFile(options.configPath),endpoint=localEndpoint(options.endpoint),credentials=parse(credentialsSchema,await json(options.credentials_file,'CREDENTIAL_INVALID'),'CREDENTIAL_INVALID');
   const selected=credentials.agents.filter(a=>a.id===options.agent_id);if(selected.length!==1)fail('AGENT_REQUIRED','Select exactly one seeded agent UUID');
@@ -128,6 +136,22 @@ export async function executeCommand(options:ContextOptions,body:unknown){
   if(command.type==='project_create'){if(command.payload.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Command targets another workspace');}
   else if(command.type==='project_update'){if(command.payload.id!==ctx.project.id)fail('PROJECT_MISMATCH','Command targets another project');}
   else if(command.type==='experiment_create'||command.type==='retrospective_create'||command.type==='comment_create'){if(command.payload.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Command targets another project');}
+  else if(command.type==='idea_create'){if(command.payload.workspace_id&&command.payload.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Idea targets another workspace');if(command.payload.project_id&&command.payload.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Idea targets another project');}
+  else if(command.type==='idea_update'){
+    const idea=await ctx.api.idea(command.payload.id);if(idea.project_id&&idea.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Idea belongs to another project');if(idea.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Idea belongs to another workspace');
+    if(command.payload.project_id&&command.payload.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Idea association targets another project');
+  }
+  else if(command.type==='entity_start'||command.type==='entity_join'||command.type==='entity_branch'||command.type==='entity_comment'||command.type==='entity_agree'||command.type==='merge_submit'){
+    const target=command.payload.entity_type==='idea'?await ctx.api.idea(command.payload.entity_id):await ctx.api.experiment(command.payload.entity_id);
+    if(target.project_id&&target.project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Collaboration target belongs to another project');
+    if(command.payload.entity_type==='idea'&&target.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Idea belongs to another workspace');
+  }
+  else if(command.type==='merge_resolve'){
+    const request=await ctx.api.mergeRequest(command.payload.id);if(request.workspace_id!==ctx.binding.workspace_id)fail('WORKSPACE_MISMATCH','Merge request targets another workspace');
+    const independent=request.target_project_id===null&&ctx.active_idea?.id===request.target_id&&ctx.active_idea?.project_id===null;
+    if(!independent&&request.target_project_id!==ctx.project.id)fail('PROJECT_MISMATCH','Live merge target differs from the explicit project or independent idea binding');
+    if(request.source_project_id!==ctx.project.id&&!(independent&&request.source_project_id===null))fail('PROJECT_MISMATCH','Live merge source differs from the explicit collaboration context');
+  }
   else{const experiment=await ctx.api.experiment(command.type==='experiment_update'?command.payload.id:command.payload.experiment_id);if(experiment.project_id!==ctx.project.id)fail('EXPERIMENT_MISMATCH','Command targets another project experiment');}
   return ctx.api.command(command);
 }

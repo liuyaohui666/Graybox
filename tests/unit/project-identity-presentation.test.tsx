@@ -12,7 +12,7 @@ test('sidebar keeps the avatar menu and nickname without persistent identity sel
  expect(sidebar).not.toContain('当前身份');expect(sidebar).not.toContain('<select');expect(sidebar).not.toContain('setProfile(');
  const person={id:'a',name:'Owner demonstration',role:'owner'};
  const html=renderToStaticMarkup(<PeopleContext.Provider value={{mode:'local',people:[person],refresh:async()=>{}}}><SidebarAccount profile="a" person={person} locked={false} setBusy={()=>{}}/></PeopleContext.Provider>);
- expect(html).toContain('本地用户1');expect(html).toContain('头像选项');expect(html).toContain('更换头像');expect(html).toContain('恢复默认头像');
+ expect(html).toContain('本地用户1');expect(html).toContain('头像选项');expect(html).not.toContain('avatar-menu');
  expect(html).not.toContain('<select');expect(html).not.toContain('owner');expect(html).not.toContain('当前身份');
 });
 test('project rows identify their owner without repeating the viewer role',()=>{

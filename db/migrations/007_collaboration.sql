@@ -1,0 +1,14 @@
+-- Additive only: never rewrite historical business rows or audit records.
+CREATE TABLE IF NOT EXISTS graybox.ideas(id uuid PRIMARY KEY,project_id uuid REFERENCES graybox.projects,workspace_id uuid REFERENCES graybox.workspaces,owner_id uuid NOT NULL REFERENCES graybox.users,revision integer NOT NULL DEFAULT 1,data jsonb NOT NULL,source jsonb,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS graybox.experiment_collaboration(experiment_id uuid PRIMARY KEY REFERENCES graybox.experiments,owner_id uuid NOT NULL REFERENCES graybox.users,source jsonb);
+CREATE TABLE IF NOT EXISTS graybox.collaboration_events(id uuid PRIMARY KEY,entity_type text NOT NULL CHECK(entity_type IN ('idea','experiment')),entity_id uuid NOT NULL,project_id uuid REFERENCES graybox.projects,kind text NOT NULL,author_id uuid NOT NULL REFERENCES graybox.users,agent_id uuid REFERENCES graybox.agents,data jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS graybox.merge_requests(id uuid PRIMARY KEY,entity_type text NOT NULL,entity_id uuid NOT NULL,target_id uuid NOT NULL,project_id uuid REFERENCES graybox.projects,author_id uuid NOT NULL REFERENCES graybox.users,revision integer NOT NULL DEFAULT 1,snapshot jsonb NOT NULL,selected_fields jsonb NOT NULL,decision text,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS graybox.merge_decisions(id uuid PRIMARY KEY,request_id uuid UNIQUE NOT NULL REFERENCES graybox.merge_requests,author_id uuid NOT NULL REFERENCES graybox.users,decision text NOT NULL,selected_fields jsonb NOT NULL,target_revision integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS graybox.collaboration_notifications(id uuid PRIMARY KEY,recipient_id uuid NOT NULL REFERENCES graybox.users,actor_id uuid NOT NULL REFERENCES graybox.users,agent_id uuid REFERENCES graybox.agents,entity_type text NOT NULL,entity_id uuid NOT NULL,project_id uuid REFERENCES graybox.projects,kind text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),read_at timestamptz);
+GRANT SELECT,INSERT ON graybox.ideas TO graybox_runtime;
+GRANT UPDATE(data,project_id,workspace_id,revision,updated_at) ON graybox.ideas TO graybox_runtime;
+GRANT SELECT,INSERT ON graybox.experiment_collaboration,graybox.collaboration_events,graybox.merge_requests,graybox.merge_decisions,graybox.collaboration_notifications TO graybox_runtime;
+GRANT UPDATE(read_at) ON graybox.collaboration_notifications TO graybox_runtime;
+CREATE INDEX IF NOT EXISTS ideas_project ON graybox.ideas(project_id,created_at,id);
+CREATE INDEX IF NOT EXISTS collaboration_events_entity ON graybox.collaboration_events(entity_type,entity_id,created_at,id);
+CREATE INDEX IF NOT EXISTS collaboration_notifications_inbox ON graybox.collaboration_notifications(recipient_id,created_at DESC,id DESC);

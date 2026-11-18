@@ -12,7 +12,7 @@ node scripts/local-graybox.mjs record --input C:/临时/graybox-record.json
 `graybox-record.json` 可以是项目、想法或实验。示例：
 
 ```json
-{"type":"idea","name":"新的尝试","body":"记录可验证的想法","project_id":null,"priority":"medium","tags":["待验证"]}
+{"type":"idea","name":"新的尝试","body":"记录可验证的想法","project_id":null,"tags":["待验证"]}
 ```
 
 项目内实验必须填写真实 `project_id`。每次补写前先查看 `list` 和当前项目目录，逐条核对已有内容，保留原文和原有附件，不重复创建同一条记录。写入后再次运行 `list`，把新记录 ID、来源提交或测试输出写入回复。迁移使用桌面端头像菜单的 `.graybox` 导出与导入功能。
